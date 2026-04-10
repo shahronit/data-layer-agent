@@ -12,6 +12,8 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
+# Next standalone expects ./public beside server.js; repo may omit the folder — ensure it exists for COPY.
+RUN mkdir -p public
 RUN npm run build
 
 # --force ensures binaries land under PLAYWRIGHT_BROWSERS_PATH (base image may skip default cache paths).
