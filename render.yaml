@@ -1,0 +1,16 @@
+# https://render.com — New Blueprint from repo, or attach this file and set GEMINI_API_KEY in the dashboard.
+services:
+  - type: web
+    name: layerlens
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: GEMINI_API_KEY
+        sync: false
+      # Optional: gemini-2.5-flash is cheaper/faster than default gemini-2.5-pro
+      # - key: GEMINI_MODEL
+      #   value: gemini-2.5-flash
