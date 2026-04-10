@@ -4,7 +4,7 @@ This app runs **Playwright (headless Chromium)** on the server for `/api/audit`.
 
 ## What you need
 
-1. A **GitHub** (or GitLab) repo containing this project (this `data-layer-agent` folder can be the repo root).
+1. A **GitHub** (or GitLab) repo containing this project (canonical repo: [shahronit/data-layer-agent](https://github.com/shahronit/data-layer-agent); the app can live at the repo root).
 2. A **Google AI Studio** API key for Gemini: [https://aistudio.google.com/apikey](https://aistudio.google.com/apikey)
 3. On the host, set environment variable **`GEMINI_API_KEY`** (same names also work: `GEMINIAPI_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`).
 
@@ -18,7 +18,7 @@ After deploy, open your site, run a scan, then open the **AI** tab and generate 
 
 ### Root Directory — you usually **do not** need it
 
-- If your GitHub repo looks like **our default layout** (`Dockerfile` and `package.json` are at the **top level** of the repo — e.g. [LensLayer---Data-Analystics-Agent](https://github.com/shahronit/LensLayer---Data-Analystics-Agent)), then **leave Root Directory empty** (or leave the default). There is no `data-layer-agent` folder inside that repo, so setting `data-layer-agent` would **fail** the build.
+- If your GitHub repo looks like **our default layout** (`Dockerfile` and `package.json` are at the **top level** of the repo — e.g. [shahronit/data-layer-agent](https://github.com/shahronit/data-layer-agent)), then **leave Root Directory empty** (or leave the default). The repo root **is** the app; there is no extra nested `data-layer-agent/` folder, so setting Root Directory to `data-layer-agent` would **fail** the build.
 - Only set **Root Directory** when the app lives in a **subfolder** (monorepo), e.g. repo contains `apps/layerlens/` or `data-layer-agent/` with the `Dockerfile` inside that folder. Then set Root Directory to that path (no leading slash), e.g. `data-layer-agent`.
 
 **Where to set it on Render (if you need it):** open your Web Service → **Settings** → **Build & Deploy** → **Root Directory** (see [Monorepo support](https://render.com/docs/monorepo-support)). On the *first* “Create Web Service” screen, expand **Advanced** if you do not see it.
@@ -32,7 +32,7 @@ Optional: **New** → **Blueprint** and point at `render.yaml` in the repo (stil
 ## Option B — Railway
 
 1. [Railway](https://railway.app) → **New Project** → **Deploy from GitHub** → pick the repo.
-2. If needed, set **Root Directory** to `data-layer-agent`.
+2. If the app is in a **monorepo subfolder** (not the case for [shahronit/data-layer-agent](https://github.com/shahronit/data-layer-agent) at root), set **Root Directory** to that folder name.
 3. Railway detects `Dockerfile` and builds it.
 4. **Variables** → add **`GEMINI_API_KEY`**.
 5. **Settings** → generate a public domain.
