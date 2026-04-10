@@ -1,6 +1,11 @@
 /** Heuristic: URLs that often correspond to analytics / tag beacons (debugger-style visibility). */
 
-import type { FailedRequestSample, NetworkRequestSample } from "./types";
+import {
+  buildAdobeAnalyticsHitSample,
+  isAdobeAnalyticsCollectionUrl,
+  MAX_ADOBE_ANALYTICS_HITS,
+} from "./adobe-analytics-beacon";
+import type { AdobeAnalyticsHitSample, FailedRequestSample, NetworkRequestSample } from "./types";
 
 const MAX_LOGGED_REQUESTS = 100;
 const MAX_FAILED_LOG = 40;
@@ -38,19 +43,32 @@ function truncateUrl(url: string, max = 220): string {
 export function createNetworkCaptureHandlers(): {
   entries: NetworkRequestSample[];
   failures: FailedRequestSample[];
+  adobeAnalyticsHits: AdobeAnalyticsHitSample[];
   attach: (page: import("playwright").Page) => void;
 } {
   const entries: NetworkRequestSample[] = [];
   const failures: FailedRequestSample[] = [];
+  const adobeAnalyticsHits: AdobeAnalyticsHitSample[] = [];
 
   function attach(page: import("playwright").Page) {
     page.on("requestfinished", async (request) => {
-      if (entries.length >= MAX_LOGGED_REQUESTS) return;
       try {
         const url = request.url();
         const rt = request.resourceType();
         const response = await request.response().catch(() => null);
         const status = response?.status() ?? 0;
+
+        if (
+          isAdobeAnalyticsCollectionUrl(url) &&
+          adobeAnalyticsHits.length < MAX_ADOBE_ANALYTICS_HITS
+        ) {
+          const postData = request.postData();
+          adobeAnalyticsHits.push(
+            buildAdobeAnalyticsHitSample(url, request.method(), status, postData),
+          );
+        }
+
+        if (entries.length >= MAX_LOGGED_REQUESTS) return;
         const interesting =
           isAnalyticsBeaconUrl(url) ||
           status >= 400 ||
@@ -77,5 +95,5 @@ export function createNetworkCaptureHandlers(): {
     });
   }
 
-  return { entries, failures, attach };
+  return { entries, failures, adobeAnalyticsHits, attach };
 }

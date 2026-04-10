@@ -300,6 +300,84 @@ export function VerificationReport({ report }: { report: AuditReport }) {
       </section>
 
       <section>
+        <SectionTitle>Adobe Analytics hits (decoded)</SectionTitle>
+        <p className="mb-3 text-xs text-white/45">
+          AppMeasurement-style <code className="text-cyan-300/80">/b/ss/</code> URLs and selected Adobe collection hosts:
+          query string and <code className="text-cyan-300/80">application/x-www-form-urlencoded</code> POST bodies are
+          parsed into keys (eVars, props, events, pageName, etc.). This is not Adobe Admin validation—processing rules,
+          Vista, and report-suite
+          config require Adobe’s tools or APIs; compare hits with{" "}
+          <a
+            className="text-cyan-400 underline"
+            href="https://experienceleague.adobe.com/docs/debugger/using/experience-cloud-debugger.html"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Experience Platform Debugger
+          </a>{" "}
+          for full mapping.
+        </p>
+        {(report.snapshot.adobeAnalyticsHits?.length ?? 0) > 0 ? (
+          <div className="space-y-6">
+            {report.snapshot.adobeAnalyticsHits!.map((hit, hi) => (
+              <div
+                key={hi}
+                className="overflow-hidden rounded-xl border border-amber-500/20 bg-amber-500/[0.04]"
+              >
+                <div className="border-b border-white/10 bg-white/[0.06] px-4 py-3">
+                  <p className="font-mono text-[11px] text-amber-200/90">
+                    {hit.method} · HTTP {hit.status}
+                    {hit.reportSuites?.length ? (
+                      <span className="ml-2 text-white/60">
+                        · report suite(s): {hit.reportSuites.join(", ")}
+                      </span>
+                    ) : null}
+                  </p>
+                  <p className="mt-1 break-all font-mono text-xs text-cyan-200/75" title={hit.urlShort}>
+                    {hit.urlShort}
+                  </p>
+                  {hit.truncatedParams || hit.paramCount > hit.params.length ? (
+                    <p className="mt-2 text-[11px] text-white/45">
+                      Showing {hit.params.length} of {hit.paramCount} parameter keys (truncated for size).
+                    </p>
+                  ) : null}
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[640px] text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-white/10 bg-black/30">
+                        <th className="px-3 py-2 text-xs font-bold uppercase text-white/45">Key</th>
+                        <th className="px-3 py-2 text-xs font-bold uppercase text-white/45">Hint</th>
+                        <th className="px-3 py-2 text-xs font-bold uppercase text-white/45">Value</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/10">
+                      {hit.params.map((row, ri) => (
+                        <tr key={`${row.key}-${ri}`} className="bg-white/[0.02]">
+                          <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-violet-300/90">
+                            {row.key}
+                          </td>
+                          <td className="px-3 py-2 text-xs text-white/50">{row.label ?? "—"}</td>
+                          <td className="max-w-0 px-3 py-2">
+                            <span className="block break-all font-mono text-xs text-white/70">{row.value}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-xl border border-dashed border-white/15 p-6 text-sm text-white/45">
+            No Adobe Analytics collection URLs matched in this capture (or payload was not decodable as query /
+            urlencoded form).
+          </div>
+        )}
+      </section>
+
+      <section>
         <SectionTitle>Failed resource requests</SectionTitle>
         <p className="mb-3 text-xs text-white/45">
           Scripts, stylesheets, XHR, or fetch that failed to complete (blocked, DNS, TLS, etc.).

@@ -1,5 +1,28 @@
 import { isAnalyticsBeaconUrl } from "./network-capture";
-import type { AuditReport, AuditSnapshot, CheckResult } from "./types";
+import type {
+  AdobeAnalyticsHitSample,
+  AuditReport,
+  AuditSnapshot,
+  CheckResult,
+} from "./types";
+
+function adobeHitHasVariableSignals(hit: AdobeAnalyticsHitSample): boolean {
+  for (const p of hit.params) {
+    const k = p.key.toLowerCase();
+    if (
+      k === "events" ||
+      k === "pagename" ||
+      k === "page" ||
+      k === "products" ||
+      k === "pe" ||
+      k === "pev2"
+    ) {
+      return true;
+    }
+    if (/^evar\d+$/.test(k) || /^prop\d+$/.test(k)) return true;
+  }
+  return false;
+}
 
 function scoreChecks(checks: CheckResult[]): number {
   const weights = { pass: 1, warn: 0.6, fail: 0, info: 0.5 };
@@ -236,6 +259,56 @@ export function runAutomatedVerification(snapshot: AuditSnapshot): AuditReport {
       name: "Console errors (page)",
       status: "pass",
       detail: "No console errors captured during audit window.",
+    });
+  }
+
+  const aaHits = snapshot.adobeAnalyticsHits ?? [];
+  if (aaHits.length > 0) {
+    const rs0 = aaHits[0].reportSuites?.length
+      ? aaHits[0].reportSuites!.join(", ")
+      : "not parsed from path (check URL)";
+    checks.push({
+      id: "adobe-analytics-collection",
+      name: "Adobe Analytics collection (beacon)",
+      status: "pass",
+      detail: `Captured ${aaHits.length} Adobe Analytics–style request(s). Report suite(s) from first hit path: ${rs0}. Decoded query/body fields are in the detailed report.`,
+    });
+    const anyVars = aaHits.some(adobeHitHasVariableSignals);
+    checks.push({
+      id: "adobe-analytics-variables",
+      name: "Adobe hit variables (eVars / props / events)",
+      status: anyVars ? "pass" : "warn",
+      detail: anyVars
+        ? "Decoded parameters include page/events/eVar/prop-style keys on at least one hit. Validate mapping vs your spec in Experience Platform Debugger or Workspace."
+        : "Collection URLs matched but no standard pageName/events/eVar/prop keys in decoded params (Web SDK / JSON payloads may differ—use Adobe’s debugger or Network raw for full mapping).",
+    });
+  } else if (stackLooksAdobeLaunch(snapshot)) {
+    checks.push({
+      id: "adobe-analytics-collection",
+      name: "Adobe Analytics collection (beacon)",
+      status: "warn",
+      detail:
+        "Launch / digitalData present but no /b/ss/ or matched Adobe collection URL in this capture window—increase wait, retest after consent, or confirm hits use a first-party domain not matched by filters.",
+    });
+    checks.push({
+      id: "adobe-analytics-variables",
+      name: "Adobe hit variables (eVars / props / events)",
+      status: "info",
+      detail: "No Adobe Analytics hit decoded—skipped.",
+    });
+  } else {
+    checks.push({
+      id: "adobe-analytics-collection",
+      name: "Adobe Analytics collection (beacon)",
+      status: "info",
+      detail:
+        "No Adobe Analytics collection URLs in this run (normal for non-Adobe sites or Edge endpoints we do not yet classify).",
+    });
+    checks.push({
+      id: "adobe-analytics-variables",
+      name: "Adobe hit variables (eVars / props / events)",
+      status: "info",
+      detail: "No Adobe Analytics hits—skipped.",
     });
   }
 

@@ -284,6 +284,7 @@ export async function capturePageAudit(
 
   const networkRequests = net.entries;
   const failedRequests = net.failures;
+  const adobeAnalyticsHits = net.adobeAnalyticsHits;
 
   await context.close();
 
@@ -312,5 +313,6 @@ export async function capturePageAudit(
     networkRequests,
     failedRequests,
     storageKeysSample,
+    adobeAnalyticsHits,
   };
 }

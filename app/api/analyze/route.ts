@@ -92,6 +92,24 @@ export async function POST(req: Request) {
       storageSessionKeyCount: report.snapshot.storageKeysSample?.sessionStorage.length ?? 0,
       storageLocalKeySample: (report.snapshot.storageKeysSample?.localStorage ?? []).slice(0, 24),
       storageSessionKeySample: (report.snapshot.storageKeysSample?.sessionStorage ?? []).slice(0, 24),
+      adobeAnalyticsHitCount: report.snapshot.adobeAnalyticsHits?.length ?? 0,
+      adobeAnalyticsFirstHitReportSuites: report.snapshot.adobeAnalyticsHits?.[0]?.reportSuites ?? [],
+      adobeAnalyticsSampleParams: (report.snapshot.adobeAnalyticsHits?.[0]?.params ?? [])
+        .filter((p) => {
+          const k = p.key.toLowerCase();
+          return (
+            k === "events" ||
+            k === "pagename" ||
+            k === "page" ||
+            k === "products" ||
+            k === "ch" ||
+            k === "campaign" ||
+            /^evar\d+$/.test(k) ||
+            /^prop\d+$/.test(k)
+          );
+        })
+        .slice(0, 24)
+        .map((p) => ({ key: p.key, value: p.value.slice(0, 240), label: p.label })),
     },
   };
 

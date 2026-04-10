@@ -81,6 +81,28 @@ function buildBody(model: DetailedReportModel, report: AuditReport): string {
   const consoleLi = model.snapshot.consoleErrors.map((e) => `<li class="mono pre">${esc(e)}</li>`).join("");
   const pageLi = model.snapshot.pageErrors.map((e) => `<li class="mono pre">${esc(e)}</li>`).join("");
 
+  const aaHits = report.snapshot.adobeAnalyticsHits ?? [];
+  const adobeAnalyticsBlock =
+    aaHits.length === 0
+      ? `<h2>Adobe Analytics hits (decoded)</h2><div class="panel"><p class="muted">No Adobe Analytics collection URLs matched this run.</p></div>`
+      : `<h2>Adobe Analytics hits (decoded)</h2>
+    <p class="muted">Query / urlencoded POST parameters only. Processing rules, Vista, and report-suite admin are not evaluated here.</p>
+    ${aaHits
+      .map(
+        (hit) => `<div class="panel" style="margin-bottom:16px;">
+    <p class="mono"><strong>${esc(hit.method)}</strong> · HTTP ${hit.status}${
+      hit.reportSuites?.length ? ` · Report suite(s): ${esc(hit.reportSuites.join(", "))}` : ""
+    }</p>
+    <p class="mono pre">${esc(hit.urlShort)}</p>
+    <table><thead><tr><th>Key</th><th>Hint</th><th>Value</th></tr></thead><tbody>${hit.params
+      .map(
+        (row) =>
+          `<tr><td class="mono">${esc(row.key)}</td><td>${esc(row.label ?? "—")}</td><td class="mono pre">${esc(row.value)}</td></tr>`,
+      )
+      .join("")}</tbody></table></div>`,
+      )
+      .join("")}`;
+
   const issuesBlock =
     issues.length > 0
       ? `<h2>Issues queue (priority &amp; severity)</h2>
@@ -152,6 +174,8 @@ function buildBody(model: DetailedReportModel, report: AuditReport): string {
         ? `<table><thead><tr><th>Tag</th><th>data-track</th><th>data-track-id</th><th>data-track-removal</th><th>data-product-id</th><th>Text snippet</th></tr></thead><tbody>${trackRows}</tbody></table>`
         : `<div class="panel"><p>No matching elements in sample.</p></div>`
     }
+
+    ${adobeAnalyticsBlock}
 
     <h2>Diagnostics</h2>
     <div class="panel">

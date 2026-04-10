@@ -33,6 +33,24 @@ export interface StorageKeysSample {
   sessionStorage: string[];
 }
 
+/** Decoded Adobe Analytics collection hit (query + form body); not Admin / processing-rule validation. */
+export interface AdobeAnalyticsParamRow {
+  key: string;
+  value: string;
+  /** Short hint for common AppMeasurement query keys */
+  label?: string;
+}
+
+export interface AdobeAnalyticsHitSample {
+  urlShort: string;
+  method: string;
+  status: number;
+  reportSuites?: string[];
+  params: AdobeAnalyticsParamRow[];
+  paramCount: number;
+  truncatedParams: boolean;
+}
+
 export interface AuditSnapshot {
   url: string;
   finalUrl: string;
@@ -69,6 +87,8 @@ export interface AuditSnapshot {
   failedRequests?: FailedRequestSample[];
   /** Storage key names only (values not read) */
   storageKeysSample?: StorageKeysSample;
+  /** Adobe Analytics / AppMeasurement style collection requests with decoded parameters */
+  adobeAnalyticsHits?: AdobeAnalyticsHitSample[];
 }
 
 export interface CheckResult {

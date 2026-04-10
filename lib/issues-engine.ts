@@ -54,6 +54,10 @@ function remediationForRule(id: string, status: CheckResult["status"]): string {
       "Open the Network tab: fix 4xx/5xx on tag scripts or beacon URLs, CORS blocks, and blocked third-party requests so tags can load and send data.",
     "network-beacons":
       "Compare captured beacon URLs and status codes with your tag spec; use the browser Network panel if filters missed first-party or delayed calls.",
+    "adobe-analytics-collection":
+      "Confirm AppMeasurement / Launch fires after digitalData and consent; increase post-load wait; check for first-party tracking domains. Use Experience Platform Debugger to compare live hits.",
+    "adobe-analytics-variables":
+      "Open the hit in browser Network (or Adobe’s debugger) and verify eVars, props, and events match your solution design. Web SDK / Edge payloads may be JSON—expand the request payload manually.",
   };
   return map[id] ?? "Review this finding against your tagging specification and validate in a live browser session.";
 }
@@ -80,7 +84,9 @@ function classifyCheck(c: CheckResult): Omit<PrioritizedIssue, "remediation"> | 
       c.id === "gtm-datalayer" ||
       c.id === "data-track" ||
       c.id === "digital-data-helper" ||
-      c.id === "digital-data-page"
+      c.id === "digital-data-page" ||
+      c.id === "adobe-analytics-variables" ||
+      c.id === "adobe-analytics-collection"
     ) {
       severity = "medium";
       priority = 3;

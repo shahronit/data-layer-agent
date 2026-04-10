@@ -1,6 +1,6 @@
 # LayerLens
 
-**LayerLens** is a local **Next.js** console for **data-layer verification**: headless **Playwright** snapshots `window.dataLayer`, `window.digitalData`, GTM container IDs, `data-track*` attributes, and console noise—then scores health, **ranks issues P1–P4 with severity and remediation**, and (optionally) runs a **Gemini** narrative. Download **Issues CSV/MD**, **full HTML dossier**, or **JSON** (includes `prioritizedIssues`).
+**LayerLens** is a local **Next.js** console for **data-layer verification**: headless **Playwright** snapshots `window.dataLayer`, `window.digitalData`, GTM container IDs, `data-track*` attributes, and console noise—then scores health, **ranks issues P1–P4 with severity and remediation**, and (optionally) runs a **Gemini** narrative. It also detects **Adobe Analytics** collection URLs (`/b/ss/` and related hosts), **decodes query and urlencoded POST parameters** (eVars, props, events, page fields) for side-by-side QA with [Experience Platform Debugger](https://experienceleague.adobe.com/docs/debugger/using/experience-cloud-debugger.html)—not Adobe Admin (processing rules / Vista / report suite config). Download **Issues CSV/MD**, **full HTML dossier**, or **JSON** (includes `prioritizedIssues`).
 
 The npm package name is `layerlens`; this repo folder may still be named `data-layer-agent` for path compatibility with parent workspace scripts.
 

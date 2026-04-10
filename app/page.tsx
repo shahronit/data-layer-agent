@@ -499,8 +499,8 @@ export default function HomePage() {
                     route)
                   </li>
                   <li>
-                    Analytics-style network requests, failed tag loads, and storage key names (no values)—listed in the
-                    detailed report
+                    Analytics-style network requests, Adobe Analytics <code className="text-cyan-300/80">/b/ss/</code> hit
+                    decoding (eVars/props/events where present), failed tag loads, and storage key names (no values)
                   </li>
                 </ul>
               </details>
