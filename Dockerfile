@@ -5,6 +5,8 @@ FROM mcr.microsoft.com/playwright:v1.59.1-jammy AS builder
 WORKDIR /app
 
 ENV NEXT_TELEMETRY_DISABLED=1
+# Install browsers here (full node_modules from npm ci). Next standalone does not ship playwright's CLI.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright-browsers
 
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -12,8 +14,9 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-# Download Chromium build matching the installed Playwright package (cached under /root/.cache/ms-playwright).
-RUN npx playwright install chromium
+# --force ensures binaries land under PLAYWRIGHT_BROWSERS_PATH (base image may skip default cache paths).
+RUN mkdir -p /ms-playwright-browsers \
+  && npx playwright install chromium --force
 
 FROM mcr.microsoft.com/playwright:v1.59.1-jammy AS runner
 
@@ -21,16 +24,17 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
-# Use bundled Chromium from the cache copied below (no system Chrome in container).
 ENV PLAYWRIGHT_CHROMIUM_CHANNEL=
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright-browsers
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
-COPY --from=builder /root/.cache/ms-playwright /root/.cache/ms-playwright
-
+COPY --from=builder /ms-playwright-browsers /ms-playwright-browsers
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+
+RUN chmod -R a+rx /ms-playwright-browsers
 
 EXPOSE 3000
 

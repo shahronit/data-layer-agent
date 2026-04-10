@@ -68,6 +68,8 @@ Use a VM with at least **1 GB RAM**; Chromium needs memory.
 
 The `Dockerfile` uses `mcr.microsoft.com/playwright:v1.59.1-jammy`, which should match the **Playwright npm version** in `package-lock.json`. After a major `npm update` of Playwright, bump the image tag to the same version and redeploy.
 
+Chromium is installed in the **builder** stage with `PLAYWRIGHT_BROWSERS_PATH=/ms-playwright-browsers` and `playwright install chromium --force`, then that folder is copied into the runner. That avoids copying `/root/.cache/ms-playwright` (often missing on the Playwright base image) and avoids relying on Next standalone’s trimmed `playwright` package (it does not include the install CLI).
+
 ## Security
 
 - Never commit `.env.local` or real API keys to git.
