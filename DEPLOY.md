@@ -14,13 +14,20 @@ After deploy, open your site, run a scan, then open the **AI** tab and generate 
 
 1. Push this project to GitHub.
 2. In [Render](https://render.com): **New +** → **Web Service** → connect the repo.
-3. **Runtime**: Docker (Render detects `Dockerfile`).
-4. If the repo root is the monorepo parent folder, set **Root Directory** to `data-layer-agent`.
-5. **Instance type**: Free (cold starts after idle; first request may be slow).
-6. Under **Environment**, add **`GEMINI_API_KEY`** = your key.
-7. Deploy. Render assigns a URL like `https://layerlens.onrender.com`.
+3. **Runtime**: **Docker** (Render should detect the root `Dockerfile`).
 
-Optional: **New** → **Blueprint** and point at `render.yaml` in the repo (still add `GEMINI_API_KEY` in the dashboard).
+### Root Directory — you usually **do not** need it
+
+- If your GitHub repo looks like **our default layout** (`Dockerfile` and `package.json` are at the **top level** of the repo — e.g. [LensLayer---Data-Analystics-Agent](https://github.com/shahronit/LensLayer---Data-Analystics-Agent)), then **leave Root Directory empty** (or leave the default). There is no `data-layer-agent` folder inside that repo, so setting `data-layer-agent` would **fail** the build.
+- Only set **Root Directory** when the app lives in a **subfolder** (monorepo), e.g. repo contains `apps/layerlens/` or `data-layer-agent/` with the `Dockerfile` inside that folder. Then set Root Directory to that path (no leading slash), e.g. `data-layer-agent`.
+
+**Where to set it on Render (if you need it):** open your Web Service → **Settings** → **Build & Deploy** → **Root Directory** (see [Monorepo support](https://render.com/docs/monorepo-support)). On the *first* “Create Web Service” screen, expand **Advanced** if you do not see it.
+
+4. **Instance type**: Free (cold starts after idle; first request may be slow).
+5. Under **Environment**, add **`GEMINI_API_KEY`** = your key.
+6. Deploy. Render assigns a URL like `https://layerlens.onrender.com`.
+
+Optional: **New** → **Blueprint** and point at `render.yaml` in the repo (still add `GEMINI_API_KEY` in the dashboard). For a monorepo, add `rootDir` under that service in `render.yaml` (see comments in that file).
 
 ## Option B — Railway
 

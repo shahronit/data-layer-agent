@@ -1,4 +1,9 @@
-# https://render.com — New Blueprint from repo, or attach this file and set GEMINI_API_KEY in the dashboard.
+# https://render.com — Blueprint: New → Blueprint → connect repo. Set GEMINI_API_KEY in the dashboard (secret).
+#
+# Repo layout: if Dockerfile is at the repo root (default for github.com/shahronit/LensLayer---Data-Analystics-Agent),
+# do NOT set rootDir. Only use rootDir when the app is in a subfolder, e.g.:
+#   rootDir: data-layer-agent
+# Then dockerfilePath is relative to that folder (usually ./Dockerfile).
 services:
   - type: web
     name: layerlens
