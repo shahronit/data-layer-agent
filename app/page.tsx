@@ -97,6 +97,17 @@ export default function HomePage() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarHydrated, setSidebarHydrated] = useState(false);
   const [jiraConfigured, setJiraConfigured] = useState<boolean | null>(null);
+  const [adobeIntegration, setAdobeIntegration] = useState<{
+    analytics2: { configured: boolean };
+    tagsReactor: { configured: boolean };
+    limitations: Record<string, string>;
+    docs: Record<string, string>;
+  } | null>(null);
+  const [adobeRsid, setAdobeRsid] = useState("");
+  const [adobePropertyOverride, setAdobePropertyOverride] = useState("");
+  const [adobePanelBusy, setAdobePanelBusy] = useState(false);
+  const [adobePanelError, setAdobePanelError] = useState<string | null>(null);
+  const [adobePanelJson, setAdobePanelJson] = useState<string | null>(null);
 
   const parsedUrls = useMemo(() => parseUrlsFromText(urlsInput), [urlsInput]);
   const urlsValid = parsedUrls.length > 0;
@@ -107,6 +118,76 @@ export default function HomePage() {
     if (!item?.ok || !item.report) return null;
     return item.report;
   }, [batchResults, selectedBatchIndex]);
+
+  const suggestedAdobeRsid = useMemo(() => {
+    const suites = report?.snapshot.adobeAnalyticsHits?.flatMap((h) => h.reportSuites ?? []) ?? [];
+    return suites[0] ?? "";
+  }, [report]);
+
+  const fetchAdobeReportSuiteSettings = useCallback(async () => {
+    const rsid = adobeRsid.trim() || suggestedAdobeRsid;
+    if (!rsid) {
+      setAdobePanelError("Enter an RSID or run a scan that captures an Adobe /b/ss/ hit first.");
+      return;
+    }
+    setAdobePanelBusy(true);
+    setAdobePanelError(null);
+    try {
+      const res = await fetch("/api/adobe/analytics/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rsid, includeMetadata: true }),
+      });
+      const data = (await res.json()) as { error?: string; message?: string };
+      if (!res.ok) throw new Error(data.error || data.message || res.statusText);
+      setAdobePanelJson(JSON.stringify(data, null, 2));
+    } catch (e) {
+      setAdobePanelError(e instanceof Error ? e.message : String(e));
+      setAdobePanelJson(null);
+    } finally {
+      setAdobePanelBusy(false);
+    }
+  }, [adobeRsid, suggestedAdobeRsid]);
+
+  const fetchAdobeTagsRules = useCallback(async () => {
+    setAdobePanelBusy(true);
+    setAdobePanelError(null);
+    try {
+      const q = adobePropertyOverride.trim();
+      const url = q
+        ? `/api/adobe/tags/rules?propertyId=${encodeURIComponent(q)}`
+        : "/api/adobe/tags/rules";
+      const res = await fetch(url);
+      const data = (await res.json()) as { error?: string; message?: string };
+      if (!res.ok) throw new Error(data.error || data.message || res.statusText);
+      setAdobePanelJson(JSON.stringify(data, null, 2));
+    } catch (e) {
+      setAdobePanelError(e instanceof Error ? e.message : String(e));
+      setAdobePanelJson(null);
+    } finally {
+      setAdobePanelBusy(false);
+    }
+  }, [adobePropertyOverride]);
+
+  const fetchAdobeTagsExtensions = useCallback(async () => {
+    setAdobePanelBusy(true);
+    setAdobePanelError(null);
+    try {
+      const q = adobePropertyOverride.trim();
+      const url = q
+        ? `/api/adobe/tags/extensions?propertyId=${encodeURIComponent(q)}`
+        : "/api/adobe/tags/extensions";
+      const res = await fetch(url);
+      const data = (await res.json()) as { error?: string; message?: string };
+      if (!res.ok) throw new Error(data.error || data.message || res.statusText);
+      setAdobePanelJson(JSON.stringify(data, null, 2));
+    } catch (e) {
+      setAdobePanelError(e instanceof Error ? e.message : String(e));
+      setAdobePanelJson(null);
+    } finally {
+      setAdobePanelBusy(false);
+    }
+  }, [adobePropertyOverride]);
 
   useEffect(() => {
     setAiMarkdown(null);
@@ -126,6 +207,21 @@ export default function HomePage() {
       })
       .catch(() => {
         if (!cancelled) setApiOk(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/adobe/integration")
+      .then((r) => r.json())
+      .then((d) => {
+        if (!cancelled && d && typeof d === "object") setAdobeIntegration(d);
+      })
+      .catch(() => {
+        if (!cancelled) setAdobeIntegration(null);
       });
     return () => {
       cancelled = true;
@@ -559,6 +655,136 @@ export default function HomePage() {
                 <p className="mt-3 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
                   {error}
                 </p>
+              ) : null}
+            </div>
+
+            <div
+              className="tl-glass tl-fade-up rounded-2xl border border-white/10 p-5 ring-1 ring-amber-500/10"
+              style={{ animationDelay: "60ms" }}
+            >
+              <h2 className="text-[11px] font-bold uppercase tracking-[0.2em] text-amber-200/90">
+                Adobe Cloud (optional)
+              </h2>
+              <p className="mt-2 text-xs leading-relaxed text-white/45">
+                Server-side calls to{" "}
+                <a
+                  className="text-cyan-400 underline"
+                  href="https://developer.adobe.com/analytics-apis/docs/2.0/guides/reportsuite/"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Analytics 2.0
+                </a>{" "}
+                and{" "}
+                <a
+                  className="text-cyan-400 underline"
+                  href="https://experienceleague.adobe.com/docs/experience-platform/tags/api/endpoints/rules.html"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Tags (Reactor)
+                </a>{" "}
+                when you add credentials to server env. Processing rules / Vista / hit acceptance in Adobe’s pipeline are
+                not public APIs—see limitations in the JSON from “Status”.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-white/50">
+                <span
+                  className={`rounded-full border px-2 py-0.5 ${adobeIntegration?.analytics2?.configured ? "border-emerald-500/40 text-emerald-200/90" : "border-white/15"}`}
+                >
+                  Analytics API: {adobeIntegration?.analytics2?.configured ? "on" : "off"}
+                </span>
+                <span
+                  className={`rounded-full border px-2 py-0.5 ${adobeIntegration?.tagsReactor?.configured ? "border-emerald-500/40 text-emerald-200/90" : "border-white/15"}`}
+                >
+                  Tags API: {adobeIntegration?.tagsReactor?.configured ? "on" : "off"}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  fetch("/api/adobe/integration")
+                    .then((r) => r.json())
+                    .then((d) => setAdobeIntegration(d))
+                    .catch(() => setAdobeIntegration(null));
+                }}
+                className="mt-2 text-[11px] font-medium text-cyan-400 underline"
+              >
+                Refresh connection status
+              </button>
+              <label className="mt-3 block text-xs text-white/45">Report suite ID (RSID)</label>
+              <input
+                className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-white outline-none focus:border-amber-500/35"
+                placeholder={suggestedAdobeRsid || "e.g. mycompanysuite"}
+                value={adobeRsid}
+                onChange={(e) => setAdobeRsid(e.target.value)}
+              />
+              {suggestedAdobeRsid ? (
+                <button
+                  type="button"
+                  onClick={() => setAdobeRsid(suggestedAdobeRsid)}
+                  className="mt-1 text-[11px] text-cyan-400 underline"
+                >
+                  Use RSID from last scan ({suggestedAdobeRsid})
+                </button>
+              ) : null}
+              <label className="mt-3 block text-xs text-white/45">Tags property ID override (optional)</label>
+              <input
+                className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 font-mono text-xs text-white outline-none focus:border-amber-500/35"
+                placeholder="PR… (else ADOBE_TAGS_PROPERTY_ID env)"
+                value={adobePropertyOverride}
+                onChange={(e) => setAdobePropertyOverride(e.target.value)}
+              />
+              <div className="mt-3 flex flex-col gap-2">
+                <button
+                  type="button"
+                  disabled={adobePanelBusy}
+                  onClick={() =>
+                    fetch("/api/adobe/integration")
+                      .then((r) => r.json())
+                      .then((d) => {
+                        setAdobePanelError(null);
+                        setAdobePanelJson(JSON.stringify(d, null, 2));
+                      })
+                      .catch((e) => setAdobePanelError(String(e)))
+                  }
+                  className="rounded-lg border border-white/15 bg-white/[0.06] py-2 text-xs font-medium text-white/85 hover:bg-white/[0.1] disabled:opacity-40"
+                >
+                  Status + limitations
+                </button>
+                <button
+                  type="button"
+                  disabled={adobePanelBusy || !adobeIntegration?.analytics2?.configured}
+                  onClick={fetchAdobeReportSuiteSettings}
+                  className="rounded-lg border border-amber-500/25 bg-amber-500/10 py-2 text-xs font-medium text-amber-100 hover:bg-amber-500/15 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Fetch report suite settings
+                </button>
+                <button
+                  type="button"
+                  disabled={adobePanelBusy || !adobeIntegration?.tagsReactor?.configured}
+                  onClick={fetchAdobeTagsRules}
+                  className="rounded-lg border border-amber-500/25 bg-amber-500/10 py-2 text-xs font-medium text-amber-100 hover:bg-amber-500/15 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Fetch Launch rules (property)
+                </button>
+                <button
+                  type="button"
+                  disabled={adobePanelBusy || !adobeIntegration?.tagsReactor?.configured}
+                  onClick={fetchAdobeTagsExtensions}
+                  className="rounded-lg border border-amber-500/25 bg-amber-500/10 py-2 text-xs font-medium text-amber-100 hover:bg-amber-500/15 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Fetch extensions (property)
+                </button>
+              </div>
+              {adobePanelError ? (
+                <p className="mt-2 rounded-lg border border-rose-500/25 bg-rose-500/10 px-2 py-1.5 text-[11px] text-rose-200">
+                  {adobePanelError}
+                </p>
+              ) : null}
+              {adobePanelJson ? (
+                <pre className="report-scroll mt-2 max-h-48 overflow-y-auto rounded-lg border border-white/10 bg-black/50 p-2 font-mono text-[10px] leading-relaxed text-white/65">
+                  {adobePanelJson}
+                </pre>
               ) : null}
             </div>
 

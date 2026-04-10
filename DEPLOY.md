@@ -70,6 +70,10 @@ The `Dockerfile` uses `mcr.microsoft.com/playwright:v1.59.1-jammy`, which should
 
 Chromium is installed in the **builder** stage with `PLAYWRIGHT_BROWSERS_PATH=/ms-playwright-browsers` and `playwright install chromium --force`, then that folder is copied into the runner. That avoids copying `/root/.cache/ms-playwright` (often missing on the Playwright base image) and avoids relying on Next standalone’s trimmed `playwright` package (it does not include the install CLI).
 
+## Optional: Adobe Analytics / Launch APIs
+
+If you set **`ADOBE_ACCESS_TOKEN`**, **`ADOBE_API_KEY`**, and **`ADOBE_ANALYTICS_GLOBAL_COMPANY_ID`**, the UI can call [Analytics 2.0 report suite settings](https://developer.adobe.com/analytics-apis/docs/2.0/guides/reportsuite/). With **`ADOBE_IMS_ORG_ID`** and **`ADOBE_TAGS_PROPERTY_ID`**, it can list [Tags rules/extensions](https://experienceleague.adobe.com/docs/experience-platform/tags/api/endpoints/rules.html). Add these in the host’s **Environment** (same as `GEMINI_API_KEY`). **Processing rules / Vista / server-side hit acceptance** are not available as public REST endpoints for this use case—see **`GET /api/adobe/integration`** in the app.
+
 ## Security
 
 - Never commit `.env.local` or real API keys to git.

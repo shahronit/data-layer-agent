@@ -94,6 +94,7 @@ export async function POST(req: Request) {
       storageSessionKeySample: (report.snapshot.storageKeysSample?.sessionStorage ?? []).slice(0, 24),
       adobeAnalyticsHitCount: report.snapshot.adobeAnalyticsHits?.length ?? 0,
       adobeAnalyticsFirstHitReportSuites: report.snapshot.adobeAnalyticsHits?.[0]?.reportSuites ?? [],
+      launchRuntimeSummary: report.snapshot.launchRuntimeSummary ?? null,
       adobeAnalyticsSampleParams: (report.snapshot.adobeAnalyticsHits?.[0]?.params ?? [])
         .filter((p) => {
           const k = p.key.toLowerCase();

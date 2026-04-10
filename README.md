@@ -23,6 +23,10 @@ After a scan, use the **Issues** tab for the remediation queue, **Dossier** for 
 - Dev server uses **Turbopack** (`next dev --turbopack`).
 - **GET /api/health** returns `{ ok: true, service: "layerlens" }` for quick readiness checks (no browser launch).
 
+## Adobe Cloud (optional)
+
+Set **`ADOBE_ACCESS_TOKEN`**, **`ADOBE_API_KEY`**, **`ADOBE_ANALYTICS_GLOBAL_COMPANY_ID`** to enable **report suite settings** via [Analytics 2.0](https://developer.adobe.com/analytics-apis/docs/2.0/guides/reportsuite/). Add **`ADOBE_IMS_ORG_ID`** and **`ADOBE_TAGS_PROPERTY_ID`** for **Launch rules / extensions** via [Reactor](https://experienceleague.adobe.com/docs/experience-platform/tags/api/endpoints/rules.html). Use the sidebar **Adobe Cloud** panel. Edge/Web SDK JSON bodies are **flattened** in audit hits; **processing rules / Vista / Adobe-side hit acceptance** still require Adobe’s own tools—`GET /api/adobe/integration` explains limits.
+
 ## AI narrative (optional)
 
 Set `GEMINI_API_KEY` in `.env.local` (aliases: `GEMINIAPI_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`), then restart the server. Optional: `GEMINI_MODEL` (default **`gemini-2.5-pro`**). **GET /api/analyze** reports whether the key is loaded. The AI uses **vendor-neutral** tagging QA defaults; the textarea is pre-filled and editable.

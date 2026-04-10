@@ -89,6 +89,8 @@ export interface AuditSnapshot {
   storageKeysSample?: StorageKeysSample;
   /** Adobe Analytics / AppMeasurement style collection requests with decoded parameters */
   adobeAnalyticsHits?: AdobeAnalyticsHitSample[];
+  /** Best-effort string from runtime _satellite (undocumented; may be empty) */
+  launchRuntimeSummary?: string | null;
 }
 
 export interface CheckResult {

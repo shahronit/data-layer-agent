@@ -255,6 +255,11 @@ export function VerificationReport({ report }: { report: AuditReport }) {
           ) : m.snapshot.adobeSatellitePresent ? (
             <p className="mt-2 text-xs text-white/45">No _satellite.track calls were captured in this wait window.</p>
           ) : null}
+          {report.snapshot.launchRuntimeSummary ? (
+            <p className="mt-3 border-t border-white/10 pt-3 text-xs text-white/50">
+              Runtime: {report.snapshot.launchRuntimeSummary}
+            </p>
+          ) : null}
         </div>
       </section>
 
@@ -303,10 +308,10 @@ export function VerificationReport({ report }: { report: AuditReport }) {
         <SectionTitle>Adobe Analytics hits (decoded)</SectionTitle>
         <p className="mb-3 text-xs text-white/45">
           AppMeasurement-style <code className="text-cyan-300/80">/b/ss/</code> URLs and selected Adobe collection hosts:
-          query string and <code className="text-cyan-300/80">application/x-www-form-urlencoded</code> POST bodies are
-          parsed into keys (eVars, props, events, pageName, etc.). This is not Adobe Admin validation—processing rules,
-          Vista, and report-suite
-          config require Adobe’s tools or APIs; compare hits with{" "}
+          query string, form POST bodies, and <span className="text-white/60">nested JSON</span> (Edge / Web SDK) are
+          flattened into dotted keys (e.g. <code className="text-cyan-300/80">xdm.web.webPageDetails.name</code>) up to a
+          size cap. This is not Adobe Admin validation—processing rules, Vista, and report-suite config require Adobe’s
+          tools or APIs; compare hits with{" "}
           <a
             className="text-cyan-400 underline"
             href="https://experienceleague.adobe.com/docs/debugger/using/experience-cloud-debugger.html"

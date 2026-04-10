@@ -146,6 +146,7 @@ export async function capturePageAudit(
     localStorage: [],
     sessionStorage: [],
   };
+  let launchRuntimeSummary: string | null = null;
 
   if (!pageError) {
     try {
@@ -246,6 +247,25 @@ export async function capturePageAudit(
           }
         }
 
+        let launchRuntimeSummary: string | null = null;
+        try {
+          const sat = (w as unknown as { _satellite?: Record<string, unknown> })._satellite;
+          if (sat && typeof sat === "object") {
+            const bits: string[] = [];
+            if (typeof sat.version === "string") bits.push(`runtime ${sat.version}`);
+            const bi = sat.buildInfo as Record<string, unknown> | undefined;
+            if (bi && typeof bi === "object") {
+              const d = bi.turbineBuildDate ?? bi.buildDate;
+              if (typeof d === "string") bits.push(`build ${d}`);
+            }
+            launchRuntimeSummary = bits.length
+              ? bits.join(" · ")
+              : "Launch library present (full rule list uses Tags API or Experience Platform Debugger)";
+          }
+        } catch {
+          launchRuntimeSummary = null;
+        }
+
         return {
           dataLayer: dl,
           digitalData: dd,
@@ -261,6 +281,7 @@ export async function capturePageAudit(
           interactiveMissingDataTrackOnlyCount: missingTrackOnly,
           interactiveGapSamples: gaps,
           storageKeysSample: { localStorage: lsKeys, sessionStorage: ssKeys },
+          launchRuntimeSummary,
         };
       });
       dataLayer = extracted.dataLayer;
@@ -277,6 +298,7 @@ export async function capturePageAudit(
       interactiveMissingDataTrackOnlyCount = extracted.interactiveMissingDataTrackOnlyCount;
       interactiveGapSamples = extracted.interactiveGapSamples;
       storageKeysSample = extracted.storageKeysSample;
+      launchRuntimeSummary = extracted.launchRuntimeSummary ?? null;
     } catch (e) {
       pageError = pageError ?? (e instanceof Error ? e.message : String(e));
     }
@@ -314,5 +336,6 @@ export async function capturePageAudit(
     failedRequests,
     storageKeysSample,
     adobeAnalyticsHits,
+    launchRuntimeSummary,
   };
 }

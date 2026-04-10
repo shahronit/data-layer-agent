@@ -83,6 +83,71 @@ function hintForKey(key: string): string | undefined {
   return undefined;
 }
 
+const MAX_FLATTEN_DEPTH = 14;
+/** Cap flattened keys so Edge / Web SDK megapayloads stay usable in UI. */
+const MAX_FLATTEN_KEYS = 240;
+
+function flattenIntoRecord(
+  prefix: string,
+  val: unknown,
+  depth: number,
+  out: Record<string, string>,
+  counter: { n: number },
+): void {
+  if (counter.n >= MAX_FLATTEN_KEYS) return;
+  if (val === null || val === undefined) return;
+  const key = prefix || "_root";
+
+  if (typeof val === "string" || typeof val === "number" || typeof val === "boolean") {
+    out[key] = String(val);
+    counter.n++;
+    return;
+  }
+
+  if (depth >= MAX_FLATTEN_DEPTH) {
+    try {
+      out[key] = truncate(JSON.stringify(val), MAX_VALUE_LEN);
+      counter.n++;
+    } catch {
+      out[key] = "[unserializable]";
+      counter.n++;
+    }
+    return;
+  }
+
+  if (Array.isArray(val)) {
+    if (val.length === 0) {
+      out[key] = "[]";
+      counter.n++;
+      return;
+    }
+    const cap = Math.min(val.length, 28);
+    for (let i = 0; i < cap; i++) {
+      flattenIntoRecord(`${key}[${i}]`, val[i], depth + 1, out, counter);
+      if (counter.n >= MAX_FLATTEN_KEYS) return;
+    }
+    if (val.length > cap) {
+      out[`${key}[].length`] = String(val.length);
+      counter.n++;
+    }
+    return;
+  }
+
+  if (typeof val === "object") {
+    const entries = Object.entries(val as Record<string, unknown>);
+    if (entries.length === 0) {
+      out[key] = "{}";
+      counter.n++;
+      return;
+    }
+    for (const [k, v] of entries) {
+      if (counter.n >= MAX_FLATTEN_KEYS) return;
+      const next = prefix ? `${prefix}.${k}` : k;
+      flattenIntoRecord(next, v, depth + 1, out, counter);
+    }
+  }
+}
+
 function mergeUrlAndBodyParams(
   url: string,
   method: string,
@@ -104,14 +169,8 @@ function mergeUrlAndBodyParams(
   if (trimmed.startsWith("{")) {
     try {
       const j = JSON.parse(trimmed) as unknown;
-      if (j && typeof j === "object" && !Array.isArray(j)) {
-        for (const [k, v] of Object.entries(j as Record<string, unknown>)) {
-          if (v === null || v === undefined) continue;
-          if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
-            out[k] = String(v);
-          }
-        }
-      }
+      const counter = { n: 0 };
+      flattenIntoRecord("", j, 0, out, counter);
     } catch {
       /* ignore */
     }
@@ -130,7 +189,8 @@ function truncate(s: string, max: number): string {
   return `${s.slice(0, max)}…`;
 }
 
-const MAX_PARAMS_PER_HIT = 90;
+/** Table rows per hit (flattened Edge/Web SDK JSON can add many keys). */
+const MAX_PARAMS_PER_HIT = 120;
 const MAX_VALUE_LEN = 360;
 const MAX_URL_SHORT = 280;
 

@@ -165,6 +165,11 @@ function buildBody(model: DetailedReportModel, report: AuditReport): string {
     <h2>Snapshot — tag command queue</h2>
     <div class="panel">
       <p><code>window._satellite</code> present: <strong>${model.snapshot.adobeSatellitePresent ? "Yes" : "No"}</strong></p>
+      ${
+        report.snapshot.launchRuntimeSummary
+          ? `<p class="muted" style="margin-top:10px;"><strong>Runtime:</strong> ${esc(report.snapshot.launchRuntimeSummary)}</p>`
+          : ""
+      }
     </div>
 
     <h2>Snapshot — data-track inventory</h2>
