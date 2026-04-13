@@ -58,6 +58,14 @@ function remediationForRule(id: string, status: CheckResult["status"]): string {
       "Confirm AppMeasurement / Launch fires after digitalData and consent; increase post-load wait; check for first-party tracking domains. Use Experience Platform Debugger to compare live hits.",
     "adobe-analytics-variables":
       "Open the hit in browser Network (or Adobe’s debugger) and verify eVars, props, and events match your solution design. Web SDK / Edge payloads may be JSON—expand the request payload manually.",
+    "event-stream-coverage":
+      "Interact with the page (click, navigate, submit forms) before clicking Continue audit so events are captured in the stream.",
+    "event-data-completeness":
+      "Add a named `event` property to every dataLayer.push() call. Named events are easier to match in GTM triggers and tag rules.",
+    "duplicate-events":
+      "Investigate the double-firing events. Check for duplicate tag snippets, multiple GTM containers calling the same rule, or race conditions in SPA routing.",
+    "digitaldata-mutation-tracking":
+      "If digitalData should be changing (e.g. cart updates, page transitions), verify the helper or application code updates it. Re-run with more interactions.",
   };
   return map[id] ?? "Review this finding against your tagging specification and validate in a live browser session.";
 }
@@ -76,7 +84,8 @@ function classifyCheck(c: CheckResult): Omit<PrioritizedIssue, "remediation"> | 
       c.id === "page-exceptions" ||
       c.id === "console-errors" ||
       c.id === "launch-route-view" ||
-      c.id === "network-errors"
+      c.id === "network-errors" ||
+      c.id === "duplicate-events"
     ) {
       severity = "high";
       priority = 2;

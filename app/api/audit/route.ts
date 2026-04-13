@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { capturePageAudit } from "@/lib/audit-engine";
+import { capturePageAudit, openBrowserForAudit } from "@/lib/audit-engine";
 import type { AuditBatchResultItem } from "@/lib/types";
 import { runAutomatedVerification } from "@/lib/verify-rules";
 
@@ -16,6 +16,8 @@ const bodySchema = z
     urls: z.array(z.string().url()).max(MAX_BATCH).optional(),
     waitAfterLoadMs: z.number().min(0).max(30_000).optional(),
     navigationTimeoutMs: z.number().min(5_000).max(120_000).optional(),
+    /** When true, opens a visible browser for the first URL so the user can log in. */
+    openForLogin: z.boolean().optional(),
   })
   .superRefine((data, ctx) => {
     const hasUrl = Boolean(data.url?.trim());
@@ -61,14 +63,38 @@ export async function POST(req: Request) {
     );
   }
 
-  const list = normalizeUrlList(parsed.data);
+  const body = parsed.data;
+  const list = normalizeUrlList(body);
   if (list.length === 0) {
     return NextResponse.json({ error: "No valid URLs" }, { status: 400 });
   }
 
+  if (body.openForLogin) {
+    try {
+      const result = await openBrowserForAudit(list[0], {
+        timeoutMs: body.navigationTimeoutMs,
+      });
+      return NextResponse.json({
+        ok: true,
+        phase: "login",
+        sessionId: result.sessionId,
+        loginDetected: result.loginDetected,
+        pageTitle: result.pageTitle,
+        currentUrl: result.currentUrl,
+        urls: list,
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return NextResponse.json(
+        { ok: false, error: message, hints: AUDIT_HINTS },
+        { status: 500 },
+      );
+    }
+  }
+
   const opts = {
-    waitAfterLoadMs: parsed.data.waitAfterLoadMs,
-    timeoutMs: parsed.data.navigationTimeoutMs,
+    waitAfterLoadMs: body.waitAfterLoadMs,
+    timeoutMs: body.navigationTimeoutMs,
   };
 
   if (list.length === 1) {

@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { buildDetailedReportModel } from "@/lib/detailed-report-model";
+import { buildEventStreamSummary, type EventGroup } from "@/lib/event-grouping";
 import { buildPrioritizedIssues } from "@/lib/issues-engine";
-import type { AuditReport } from "@/lib/types";
+import type { AuditReport, CapturedEventSource } from "@/lib/types";
 
 function Badge({ status }: { status: string }) {
   const map: Record<string, string> = {
@@ -31,9 +32,150 @@ function SectionTitle({ children }: { children: ReactNode }) {
   );
 }
 
+const SOURCE_COLORS: Record<CapturedEventSource, string> = {
+  dataLayer: "bg-blue-500/15 text-blue-200 ring-blue-400/30",
+  digitalData: "bg-emerald-500/15 text-emerald-200 ring-emerald-400/30",
+  satellite: "bg-violet-500/15 text-violet-200 ring-violet-400/25",
+  network: "bg-amber-500/15 text-amber-200 ring-amber-400/25",
+};
+
+function SourceBadge({ source }: { source: CapturedEventSource }) {
+  return (
+    <span
+      className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ring-1 ${SOURCE_COLORS[source]}`}
+    >
+      {source}
+    </span>
+  );
+}
+
+function EventGroupCard({ group }: { group: EventGroup }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-white/10 bg-white/[0.03]">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-white/[0.04]"
+      >
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-600/80 to-cyan-600/80 text-[11px] font-bold text-white">
+          {group.occurrences}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-medium text-white/90">{group.eventName}</p>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {group.sources.map((s) => (
+              <SourceBadge key={s.source} source={s.source} />
+            ))}
+          </div>
+        </div>
+        <span className="text-xs text-white/40">
+          {(group.firstSeen / 1000).toFixed(1)}s
+          {group.firstSeen !== group.lastSeen && ` \u2013 ${(group.lastSeen / 1000).toFixed(1)}s`}
+        </span>
+        <span className={`text-white/40 transition ${open ? "rotate-90" : ""}`}>\u25B6</span>
+      </button>
+      {open && (
+        <div className="border-t border-white/10 bg-black/20">
+          {group.sources.map((src) => (
+            <div key={src.source} className="border-b border-white/5 last:border-0">
+              <div className="flex items-center gap-2 px-4 py-2 text-xs text-white/50">
+                <SourceBadge source={src.source} />
+                <span>{src.count} event{src.count !== 1 ? "s" : ""}</span>
+              </div>
+              <div className="space-y-1 px-4 pb-3">
+                {src.events.map((ev, i) => (
+                  <EventRow key={i} ev={ev} />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EventRow({ ev }: { ev: { timestamp: number; pageUrl: string; payload: unknown } }) {
+  const [expanded, setExpanded] = useState(false);
+  const payloadStr = JSON.stringify(ev.payload, null, 2);
+  const isLong = payloadStr.length > 120;
+
+  return (
+    <div className="rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2">
+      <div className="flex items-center gap-3 text-xs">
+        <span className="font-mono text-white/50">{(ev.timestamp / 1000).toFixed(2)}s</span>
+        <span className="truncate text-cyan-200/70" title={ev.pageUrl}>
+          {ev.pageUrl}
+        </span>
+      </div>
+      <pre
+        className={`mt-1 overflow-x-auto font-mono text-[11px] leading-relaxed text-white/55 ${
+          !expanded && isLong ? "max-h-16 overflow-hidden" : ""
+        }`}
+      >
+        {payloadStr}
+      </pre>
+      {isLong && (
+        <button
+          type="button"
+          onClick={() => setExpanded((e) => !e)}
+          className="mt-1 text-[10px] font-medium text-cyan-400 hover:underline"
+        >
+          {expanded ? "Collapse" : "Show full payload"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function EventStreamSection({ summary }: { summary: import("@/lib/event-grouping").EventStreamSummary }) {
+  const fmtDuration =
+    summary.captureDurationMs >= 60_000
+      ? `${(summary.captureDurationMs / 60_000).toFixed(1)} min`
+      : `${(summary.captureDurationMs / 1000).toFixed(1)}s`;
+
+  return (
+    <section>
+      <SectionTitle>Event stream (session capture)</SectionTitle>
+      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {[
+          ["Events", summary.totalEvents],
+          ["Unique names", summary.uniqueNames],
+          ["Duration", fmtDuration],
+          ["Sources", Object.entries(summary.bySource).filter(([, v]) => v > 0).map(([k, v]) => `${k}: ${v}`).join(", ") || "none"],
+        ].map(([lbl, val]) => (
+          <div
+            key={String(lbl)}
+            className="rounded-xl border border-white/10 bg-gradient-to-b from-white/[0.08] to-transparent px-3 py-3"
+          >
+            <p className="text-[10px] font-bold uppercase tracking-wide text-white/40">{lbl}</p>
+            <p className="mt-1 bg-gradient-to-r from-white to-white/70 bg-clip-text text-sm font-bold text-transparent">
+              {val}
+            </p>
+          </div>
+        ))}
+      </div>
+      <div className="space-y-2">
+        {summary.groups.map((g) => (
+          <EventGroupCard key={g.eventName} group={g} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function VerificationReport({ report }: { report: AuditReport }) {
   const m = useMemo(() => buildDetailedReportModel(report), [report]);
   const issues = useMemo(() => buildPrioritizedIssues(report), [report]);
+  const esSummary = useMemo(
+    () =>
+      report.snapshot.eventStream && report.snapshot.eventStream.length > 0
+        ? buildEventStreamSummary(report.snapshot.eventStream)
+        : null,
+    [report],
+  );
 
   return (
     <div className="space-y-10 pb-4">
@@ -83,6 +225,10 @@ export function VerificationReport({ report }: { report: AuditReport }) {
           </ol>
         )}
       </section>
+
+      {esSummary && (
+        <EventStreamSection summary={esSummary} />
+      )}
 
       <section>
         <SectionTitle>Page details</SectionTitle>

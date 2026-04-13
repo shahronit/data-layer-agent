@@ -91,6 +91,21 @@ export interface AuditSnapshot {
   adobeAnalyticsHits?: AdobeAnalyticsHitSample[];
   /** Best-effort string from runtime _satellite (undocumented; may be empty) */
   launchRuntimeSummary?: string | null;
+  /** Continuous event stream captured during a headed browser session */
+  eventStream?: CapturedEvent[];
+}
+
+export type CapturedEventSource = "dataLayer" | "digitalData" | "satellite" | "network";
+
+/** A single event captured during a headed browser session. */
+export interface CapturedEvent {
+  /** Milliseconds since session start */
+  timestamp: number;
+  source: CapturedEventSource;
+  eventName: string;
+  payload: unknown;
+  /** URL of the page when the event fired */
+  pageUrl: string;
 }
 
 export interface CheckResult {

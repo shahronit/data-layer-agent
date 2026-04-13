@@ -12,9 +12,10 @@ import { DEFAULT_AI_CHAT_RULES } from "@/lib/ai-report-defaults";
 import { APP_NAME, APP_TAGLINE, exportFilename } from "@/lib/brand";
 import { detailedReportToHtml } from "@/lib/detailed-report-html";
 import { issuesToCsv, issuesToMarkdown, buildPrioritizedIssues } from "@/lib/issues-engine";
-import type { AuditBatchResultItem, AuditReport } from "@/lib/types";
+import type { AuditBatchResultItem, AuditReport, CapturedEventSource } from "@/lib/types";
+import { buildEventStreamSummary, type EventGroup, type EventStreamSummary } from "@/lib/event-grouping";
 
-type Tab = "issues" | "checks" | "detailed" | "raw" | "ai";
+type Tab = "issues" | "events" | "checks" | "detailed" | "raw" | "ai";
 
 function StatusDot({ status }: { status: string }) {
   const map: Record<string, string> = {
@@ -60,6 +61,210 @@ function isValidHttpUrl(value: string): boolean {
 }
 
 const MAX_URLS_PER_RUN = 10;
+
+const ES_SOURCE_COLORS: Record<CapturedEventSource, string> = {
+  dataLayer: "bg-blue-500/15 text-blue-200 ring-blue-400/30",
+  digitalData: "bg-emerald-500/15 text-emerald-200 ring-emerald-400/30",
+  satellite: "bg-violet-500/15 text-violet-200 ring-violet-400/25",
+  network: "bg-amber-500/15 text-amber-200 ring-amber-400/25",
+};
+
+function EsSourceBadge({ source }: { source: CapturedEventSource }) {
+  return (
+    <span
+      className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ring-1 ${ES_SOURCE_COLORS[source]}`}
+    >
+      {source}
+    </span>
+  );
+}
+
+function EsGroupCard({ group }: { group: EventGroup }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="tl-card-enter overflow-hidden rounded-xl border border-white/10 bg-white/[0.03]">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-white/[0.05]"
+      >
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-600/80 to-cyan-600/80 text-xs font-bold text-white">
+          {group.occurrences}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-medium text-white/90">{group.eventName}</p>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {group.sources.map((s) => (
+              <EsSourceBadge key={s.source} source={s.source} />
+            ))}
+          </div>
+        </div>
+        <div className="shrink-0 text-right">
+          <p className="text-xs text-white/40">
+            {(group.firstSeen / 1000).toFixed(1)}s
+            {group.firstSeen !== group.lastSeen && ` \u2013 ${(group.lastSeen / 1000).toFixed(1)}s`}
+          </p>
+        </div>
+        <span className={`text-white/40 transition ${open ? "rotate-90" : ""}`}>{"\u25B6"}</span>
+      </button>
+      {open && (
+        <div className="border-t border-white/10 bg-black/20">
+          {group.sources.map((src) => (
+            <div key={src.source} className="border-b border-white/5 last:border-0">
+              <div className="flex items-center gap-2 px-4 py-2 text-xs text-white/50">
+                <EsSourceBadge source={src.source} />
+                <span>
+                  {src.count} event{src.count !== 1 ? "s" : ""}
+                </span>
+              </div>
+              <div className="space-y-1 px-4 pb-3">
+                {src.events.map((ev, i) => {
+                  const payloadStr = JSON.stringify(ev.payload, null, 2);
+                  return (
+                    <EsEventRow key={i} timestamp={ev.timestamp} pageUrl={ev.pageUrl} payloadStr={payloadStr} />
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EsEventRow({
+  timestamp,
+  pageUrl,
+  payloadStr,
+}: {
+  timestamp: number;
+  pageUrl: string;
+  payloadStr: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = payloadStr.length > 140;
+
+  return (
+    <div className="rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2">
+      <div className="flex items-center gap-3 text-xs">
+        <span className="font-mono text-white/50">{(timestamp / 1000).toFixed(2)}s</span>
+        <span className="truncate text-cyan-200/70" title={pageUrl}>
+          {pageUrl}
+        </span>
+      </div>
+      <pre
+        className={`mt-1 overflow-x-auto font-mono text-[11px] leading-relaxed text-white/55 ${
+          !expanded && isLong ? "max-h-16 overflow-hidden" : ""
+        }`}
+      >
+        {payloadStr}
+      </pre>
+      {isLong && (
+        <button
+          type="button"
+          onClick={() => setExpanded((e) => !e)}
+          className="mt-1 text-[10px] font-medium text-cyan-400 hover:underline"
+        >
+          {expanded ? "Collapse" : "Show full payload"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function EventStreamTab({ report }: { report: AuditReport }) {
+  const summary = useMemo(
+    () => buildEventStreamSummary(report.snapshot.eventStream ?? []),
+    [report],
+  );
+  const [filter, setFilter] = useState<CapturedEventSource | "all">("all");
+
+  const filteredGroups = useMemo(
+    () =>
+      filter === "all"
+        ? summary.groups
+        : summary.groups
+            .map((g) => ({
+              ...g,
+              sources: g.sources.filter((s) => s.source === filter),
+              occurrences: g.sources
+                .filter((s) => s.source === filter)
+                .reduce((sum, s) => sum + s.count, 0),
+            }))
+            .filter((g) => g.sources.length > 0),
+    [summary, filter],
+  );
+
+  const fmtDuration =
+    summary.captureDurationMs >= 60_000
+      ? `${(summary.captureDurationMs / 60_000).toFixed(1)} min`
+      : `${(summary.captureDurationMs / 1000).toFixed(1)}s`;
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {(
+          [
+            ["Total events", String(summary.totalEvents)],
+            ["Unique names", String(summary.uniqueNames)],
+            ["Capture duration", fmtDuration],
+            [
+              "Sources",
+              Object.entries(summary.bySource)
+                .filter(([, v]) => v > 0)
+                .map(([k, v]) => `${k}: ${v}`)
+                .join(", ") || "none",
+            ],
+          ] as const
+        ).map(([lbl, val]) => (
+          <div
+            key={lbl}
+            className="rounded-xl border border-white/10 bg-gradient-to-b from-white/[0.08] to-transparent px-3 py-3"
+          >
+            <p className="text-[10px] font-bold uppercase tracking-wide text-white/40">{lbl}</p>
+            <p className="mt-1 bg-gradient-to-r from-white to-white/70 bg-clip-text text-sm font-bold text-transparent">
+              {val}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {(["all", "dataLayer", "digitalData", "satellite", "network"] as const).map((f) => (
+          <button
+            key={f}
+            type="button"
+            onClick={() => setFilter(f)}
+            className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+              filter === f
+                ? "border-violet-400/50 bg-violet-500/20 text-white shadow-[0_0_12px_-4px_rgba(139,92,246,0.5)]"
+                : "border-white/15 text-white/50 hover:border-white/25 hover:bg-white/[0.06]"
+            }`}
+          >
+            {f === "all" ? "All sources" : f}
+            {f !== "all" && summary.bySource[f] > 0 && (
+              <span className="ml-1 text-white/35">({summary.bySource[f]})</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {filteredGroups.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-white/15 px-6 py-8 text-center text-sm text-white/45">
+          No events match the selected filter.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filteredGroups.map((g) => (
+            <EsGroupCard key={g.eventName} group={g} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function parseUrlsFromText(text: string): string[] {
   const lines = text
@@ -108,6 +313,10 @@ export default function HomePage() {
   const [adobePanelBusy, setAdobePanelBusy] = useState(false);
   const [adobePanelError, setAdobePanelError] = useState<string | null>(null);
   const [adobePanelJson, setAdobePanelJson] = useState<string | null>(null);
+  const [loginSessionId, setLoginSessionId] = useState<string | null>(null);
+  const [loginWaiting, setLoginWaiting] = useState(false);
+  const [loginPageTitle, setLoginPageTitle] = useState<string | null>(null);
+  const [loginSessionUrls, setLoginSessionUrls] = useState<string[]>([]);
 
   const parsedUrls = useMemo(() => parseUrlsFromText(urlsInput), [urlsInput]);
   const urlsValid = parsedUrls.length > 0;
@@ -301,11 +510,26 @@ export default function HomePage() {
     setError(null);
     setAiMarkdown(null);
     setAiError(null);
+    setLoginSessionId(null);
+    setLoginWaiting(false);
+    setLoginPageTitle(null);
+    setLoginSessionUrls([]);
     try {
       const body =
         parsedUrls.length === 1
-          ? { url: parsedUrls[0], waitAfterLoadMs: waitMs, navigationTimeoutMs: navTimeoutMs }
-          : { urls: parsedUrls, waitAfterLoadMs: waitMs, navigationTimeoutMs: navTimeoutMs };
+          ? {
+              url: parsedUrls[0],
+              waitAfterLoadMs: waitMs,
+              navigationTimeoutMs: navTimeoutMs,
+              openForLogin: true,
+            }
+          : {
+              urls: parsedUrls,
+              waitAfterLoadMs: waitMs,
+              navigationTimeoutMs: navTimeoutMs,
+              openForLogin: true,
+            };
+
       const res = await fetch("/api/audit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -313,6 +537,12 @@ export default function HomePage() {
       });
       const data = (await res.json()) as {
         ok?: boolean;
+        phase?: string;
+        sessionId?: string;
+        loginDetected?: boolean;
+        pageTitle?: string;
+        currentUrl?: string;
+        urls?: string[];
         results?: AuditBatchResultItem[];
         error?: string;
         hints?: string[];
@@ -320,6 +550,65 @@ export default function HomePage() {
       if (!res.ok) {
         const hintBlock = Array.isArray(data.hints) ? `\n\n${data.hints.join("\n")}` : "";
         setError((data.error || "Check failed") + hintBlock);
+        setBatchResults(null);
+        return;
+      }
+
+      if (data.phase === "login" && data.sessionId) {
+        setLoginSessionId(data.sessionId);
+        setLoginWaiting(true);
+        setLoginPageTitle(data.pageTitle ?? null);
+        setLoginSessionUrls(data.urls ?? parsedUrls);
+        setLoading(false);
+        return;
+      }
+
+      const results = data.results;
+      if (!Array.isArray(results) || results.length === 0) {
+        setError("Unexpected response from server.");
+        setBatchResults(null);
+        return;
+      }
+      setBatchResults(results);
+      const firstOk = results.findIndex((r) => r.ok && r.report);
+      setSelectedBatchIndex(firstOk >= 0 ? firstOk : 0);
+      setTab("issues");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Network error");
+      setBatchResults(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [parsedUrls, urlsValid, waitMs, navTimeoutMs]);
+
+  const continueAfterLogin = useCallback(async (sessionIdOverride?: string) => {
+    const sid = sessionIdOverride ?? loginSessionId;
+    if (!sid) return;
+    setLoading(true);
+    setLoginWaiting(false);
+    setError(null);
+    try {
+      const continueBody: Record<string, unknown> = {
+        sessionId: sid,
+        action: "continue",
+        waitAfterLoadMs: waitMs,
+        navigationTimeoutMs: navTimeoutMs,
+      };
+      if (loginSessionUrls.length > 1) {
+        continueBody.urls = loginSessionUrls;
+      }
+      const res = await fetch("/api/audit/continue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(continueBody),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        results?: AuditBatchResultItem[];
+        error?: string;
+      };
+      if (!res.ok) {
+        setError(data.error || "Audit failed after login.");
         setBatchResults(null);
         return;
       }
@@ -338,8 +627,28 @@ export default function HomePage() {
       setBatchResults(null);
     } finally {
       setLoading(false);
+      setLoginSessionId(null);
+      setLoginPageTitle(null);
+      setLoginSessionUrls([]);
     }
-  }, [parsedUrls, urlsValid, waitMs, navTimeoutMs]);
+  }, [loginSessionId, loginSessionUrls, waitMs, navTimeoutMs]);
+
+  const cancelLogin = useCallback(async () => {
+    if (!loginSessionId) return;
+    try {
+      await fetch("/api/audit/continue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: loginSessionId, action: "cancel" }),
+      });
+    } catch {
+      /* best effort */
+    }
+    setLoginSessionId(null);
+    setLoginWaiting(false);
+    setLoginPageTitle(null);
+    setLoading(false);
+  }, [loginSessionId]);
 
   const exportMarkdown = useCallback(() => {
     if (!aiMarkdown) return;
@@ -440,16 +749,21 @@ export default function HomePage() {
     }
   }, [report, customRules]);
 
+  const hasEventStream = Boolean(
+    report?.snapshot.eventStream && report.snapshot.eventStream.length > 0,
+  );
+
   const tabDefs = useMemo(
     () =>
       [
         { id: "issues" as const, label: "Issues" },
+        ...(hasEventStream ? [{ id: "events" as const, label: "Events" }] : []),
         { id: "checks" as const, label: "All checks" },
         { id: "detailed" as const, label: "Full report" },
         { id: "raw" as const, label: "Raw data" },
         { id: "ai" as const, label: "AI report" },
       ] as const,
-    [],
+    [hasEventStream],
   );
 
   return (
@@ -611,7 +925,9 @@ export default function HomePage() {
               <p className="mt-1 text-[11px] text-white/40">
                 {parsedUrls.length} valid URL{parsedUrls.length === 1 ? "" : "s"} detected
                 {parsedUrls.length >= MAX_URLS_PER_RUN ? ` (max ${MAX_URLS_PER_RUN} per run)` : ""}
+                {parsedUrls.length > 0 ? " · a browser window will open first so you can log in or interact before the audit runs" : ""}
               </p>
+
               <label className="mt-4 block text-xs text-white/45">Extra wait after load (ms)</label>
               <input
                 type="number"
@@ -651,6 +967,52 @@ export default function HomePage() {
                   )}
                 </span>
               </button>
+              {loginWaiting && loginSessionId && (
+                <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-4">
+                  <div className="flex items-start gap-3">
+                    <span className="mt-0.5 inline-block h-4 w-4 animate-pulse rounded-full bg-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.5)]" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-amber-100">Browser opened — waiting for you</p>
+                      <p className="mt-1 text-xs leading-relaxed text-amber-200/70">
+                        A browser window has opened with your URL
+                        {loginPageTitle ? (
+                          <> (<strong className="text-white/80">{loginPageTitle}</strong>)</>
+                        ) : null}
+                        . Log in, fill in details, or navigate as needed. When you&apos;re ready, click <strong className="text-white/80">Continue audit</strong> below
+                        {loginSessionUrls.length > 1 ? (
+                          <> to scan all <strong className="text-white/80">{loginSessionUrls.length} URLs</strong> using this session</>
+                        ) : null}
+                        .
+                      </p>
+                      <div className="mt-3 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => continueAfterLogin()}
+                          disabled={loading}
+                          className="rounded-lg bg-gradient-to-r from-violet-600 to-cyan-600 px-4 py-2 text-xs font-bold text-white shadow transition hover:brightness-110 active:scale-[0.97] disabled:opacity-40"
+                        >
+                          {loading ? (
+                            <span className="inline-flex items-center gap-2">
+                              <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                              {loginSessionUrls.length > 1 ? `Auditing ${loginSessionUrls.length} pages…` : "Capturing audit…"}
+                            </span>
+                          ) : (
+                            loginSessionUrls.length > 1 ? `Continue audit (${loginSessionUrls.length} URLs)` : "Continue audit"
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={cancelLogin}
+                          disabled={loading}
+                          className="rounded-lg border border-white/15 bg-white/[0.06] px-4 py-2 text-xs font-medium text-white/70 transition hover:bg-white/[0.1] disabled:opacity-40"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
               {error ? (
                 <p className="mt-3 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
                   {error}
@@ -975,6 +1337,9 @@ export default function HomePage() {
                       jiraConfigured={jiraConfigured}
                       onRefreshJira={refreshJiraConfigured}
                     />
+                  )}
+                  {tab === "events" && hasEventStream && (
+                    <EventStreamTab report={report} />
                   )}
                   {tab === "checks" && (
                     <ul className="space-y-3">

@@ -23,14 +23,14 @@ function buildChannelOrder(): Array<"chrome" | "msedge" | "chrome-beta"> {
  * Prefer system Chrome/Edge so audits work even when Playwright's downloaded
  * Chromium is missing or mismatched (e.g. sandbox cache vs Apple Silicon).
  */
-async function launchFreshBrowser(): Promise<Browser> {
+async function launchFreshBrowser(headless = true): Promise<Browser> {
   const args = [...LAUNCH_ARGS];
 
   const customPath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?.trim();
   if (customPath) {
     return chromium.launch({
       executablePath: customPath,
-      headless: true,
+      headless,
       args,
     });
   }
@@ -38,14 +38,14 @@ async function launchFreshBrowser(): Promise<Browser> {
   let lastError: Error | null = null;
   for (const channel of buildChannelOrder()) {
     try {
-      return await chromium.launch({ channel, headless: true, args });
+      return await chromium.launch({ channel, headless, args });
     } catch (e) {
       lastError = e instanceof Error ? e : new Error(String(e));
     }
   }
 
   try {
-    return await chromium.launch({ headless: true, args });
+    return await chromium.launch({ headless, args });
   } catch (e) {
     const inner = e instanceof Error ? e.message : String(e);
     const channelFail = lastError ? `System browser attempts failed: ${lastError.message}\n` : "";
@@ -67,6 +67,14 @@ export async function getSharedBrowser(): Promise<Browser> {
   browserSingleton = null;
   browserSingleton = await launchFreshBrowser();
   return browserSingleton;
+}
+
+/**
+ * Launch a standalone headed (visible) browser for interactive login.
+ * The caller owns the returned Browser and must close it when done.
+ */
+export async function launchHeadedBrowser(): Promise<Browser> {
+  return launchFreshBrowser(false);
 }
 
 export function resetSharedBrowser(): void {

@@ -1,4 +1,5 @@
 import { buildDetailedReportModel } from "./detailed-report-model";
+import { buildEventStreamSummary } from "./event-grouping";
 import { buildPrioritizedIssues } from "./issues-engine";
 import type { AuditReport } from "./types";
 import type { DetailedReportModel } from "./detailed-report-model";
@@ -113,8 +114,46 @@ function buildBody(model: DetailedReportModel, report: AuditReport): string {
     </table>`
       : `<h2>Issues queue</h2><div class="panel"><p>No open issues—all automated rules passed on this snapshot.</p></div>`;
 
+  const eventStream = report.snapshot.eventStream ?? [];
+  let eventStreamBlock = "";
+  if (eventStream.length > 0) {
+    const esSummary = buildEventStreamSummary(eventStream);
+    const fmtDuration =
+      esSummary.captureDurationMs >= 60_000
+        ? `${(esSummary.captureDurationMs / 60_000).toFixed(1)} min`
+        : `${(esSummary.captureDurationMs / 1000).toFixed(1)} s`;
+    const groupRows = esSummary.groups
+      .map(
+        (g) => `<tr>
+  <td>${esc(g.eventName)}</td>
+  <td>${g.occurrences}</td>
+  <td>${g.sources.map((s) => `${esc(s.source)} (${s.count})`).join(", ")}</td>
+  <td class="mono">${(g.firstSeen / 1000).toFixed(1)}s</td>
+  <td class="mono">${(g.lastSeen / 1000).toFixed(1)}s</td>
+</tr>`,
+      )
+      .join("\n");
+    eventStreamBlock = `<h2>Event stream (session capture)</h2>
+    <div class="cards">
+      <div class="card"><div class="lbl">Total events</div><div class="val">${esSummary.totalEvents}</div></div>
+      <div class="card"><div class="lbl">Unique names</div><div class="val">${esSummary.uniqueNames}</div></div>
+      <div class="card"><div class="lbl">Duration</div><div class="val">${fmtDuration}</div></div>
+      <div class="card"><div class="lbl">dataLayer</div><div class="val">${esSummary.bySource.dataLayer}</div></div>
+      <div class="card"><div class="lbl">digitalData</div><div class="val">${esSummary.bySource.digitalData}</div></div>
+      <div class="card"><div class="lbl">_satellite</div><div class="val">${esSummary.bySource.satellite}</div></div>
+      <div class="card"><div class="lbl">Network</div><div class="val">${esSummary.bySource.network}</div></div>
+    </div>
+    <p class="muted">Events grouped by name, ordered by first occurrence. Expand in the app UI for full payload details.</p>
+    <table>
+      <thead><tr><th>Event name</th><th>Count</th><th>Sources</th><th>First seen</th><th>Last seen</th></tr></thead>
+      <tbody>${groupRows}</tbody>
+    </table>`;
+  }
+
   return `
     ${issuesBlock}
+
+    ${eventStreamBlock}
 
     <h2>Page context</h2>
     <div class="panel">

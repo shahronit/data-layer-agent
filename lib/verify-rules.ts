@@ -373,5 +373,87 @@ export function runAutomatedVerification(snapshot: AuditSnapshot): AuditReport {
     detail: `localStorage ${lsN} key(s), sessionStorage ${ssN} key(s) recorded (key names only; values not read).`,
   });
 
+  /* ---- Event stream checks (only when a headed session was used) ---- */
+
+  const stream = snapshot.eventStream ?? [];
+  if (stream.length > 0) {
+    checks.push({
+      id: "event-stream-coverage",
+      name: "Event stream coverage",
+      status: "pass",
+      detail: `Captured ${stream.length} event(s) across the browser session. Sources: ${
+        [...new Set(stream.map((e) => e.source))].join(", ")
+      }.`,
+    });
+
+    const dlPushes = stream.filter((e) => e.source === "dataLayer");
+    const noEventKey = dlPushes.filter((e) => e.eventName === "dataLayer.push");
+    if (dlPushes.length > 0 && noEventKey.length > 0) {
+      checks.push({
+        id: "event-data-completeness",
+        name: "dataLayer pushes with event key",
+        status: noEventKey.length > dlPushes.length / 2 ? "warn" : "pass",
+        detail: `${dlPushes.length} dataLayer push(es) captured; ${noEventKey.length} lacked an "event" property. Named events are easier to track in tag rules.`,
+      });
+    } else if (dlPushes.length > 0) {
+      checks.push({
+        id: "event-data-completeness",
+        name: "dataLayer pushes with event key",
+        status: "pass",
+        detail: `All ${dlPushes.length} dataLayer push(es) included a named "event" property.`,
+      });
+    }
+
+    const nameTimestamps = new Map<string, number[]>();
+    for (const ev of stream) {
+      const arr = nameTimestamps.get(ev.eventName);
+      if (arr) arr.push(ev.timestamp);
+      else nameTimestamps.set(ev.eventName, [ev.timestamp]);
+    }
+    const duplicates: string[] = [];
+    for (const [name, times] of nameTimestamps) {
+      times.sort((a, b) => a - b);
+      for (let i = 1; i < times.length; i++) {
+        if (times[i] - times[i - 1] < 200) {
+          duplicates.push(name);
+          break;
+        }
+      }
+    }
+    if (duplicates.length > 0) {
+      checks.push({
+        id: "duplicate-events",
+        name: "Potential duplicate events",
+        status: "warn",
+        detail: `${duplicates.length} event name(s) fired multiple times within 200 ms: ${duplicates.slice(0, 6).join(", ")}${duplicates.length > 6 ? "…" : ""}. Check for double-fire issues.`,
+      });
+    } else {
+      checks.push({
+        id: "duplicate-events",
+        name: "Potential duplicate events",
+        status: "pass",
+        detail: "No event names fired within 200 ms of each other (no obvious double-fires).",
+      });
+    }
+
+    const ddMutations = stream.filter((e) => e.source === "digitalData");
+    checks.push({
+      id: "digitaldata-mutation-tracking",
+      name: "digitalData mutation tracking",
+      status: ddMutations.length > 0 ? "pass" : "info",
+      detail: ddMutations.length > 0
+        ? `Observed ${ddMutations.length} digitalData change(s): ${[...new Set(ddMutations.map((e) => e.eventName))].slice(0, 8).join(", ")}.`
+        : "No digitalData mutations were observed during the session.",
+    });
+  } else if (snapshot.eventStream !== undefined) {
+    checks.push({
+      id: "event-stream-coverage",
+      name: "Event stream coverage",
+      status: "warn",
+      detail:
+        "A headed browser session was used but no events were captured. Interact with the page before clicking Continue audit.",
+    });
+  }
+
   return { snapshot, checks, score: scoreChecks(checks) };
 }

@@ -1,4 +1,5 @@
 import { REPORT_PRODUCT_NAME } from "./brand";
+import { buildEventStreamSummary, type EventStreamSummary } from "./event-grouping";
 import type { AuditReport, AuditSnapshot, CheckResult } from "./types";
 
 export interface DetailedCheckRow {
@@ -57,6 +58,7 @@ export interface DetailedReportModel {
     consoleErrors: string[];
     pageErrors: string[];
   };
+  eventStreamSummary?: EventStreamSummary;
 }
 
 function safeJson(value: unknown, space = 2): string {
@@ -187,5 +189,9 @@ export function buildDetailedReportModel(report: AuditReport): DetailedReportMod
       consoleErrors: [...snapshot.consoleErrors],
       pageErrors: [...(snapshot.pageErrors ?? [])],
     },
+    eventStreamSummary:
+      snapshot.eventStream && snapshot.eventStream.length > 0
+        ? buildEventStreamSummary(snapshot.eventStream)
+        : undefined,
   };
 }
