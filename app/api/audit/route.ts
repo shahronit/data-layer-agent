@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { capturePageAudit, openBrowserForAudit } from "@/lib/audit-engine";
+import type { CookieEntry } from "@/lib/audit-engine";
 import { isHeadedModeAvailable } from "@/lib/browser-launch";
 import type { AuditBatchResultItem } from "@/lib/types";
 import { runAutomatedVerification } from "@/lib/verify-rules";
@@ -11,6 +12,13 @@ export const maxDuration = 300;
 
 const MAX_BATCH = 10;
 
+const cookieSchema = z.object({
+  name: z.string().min(1),
+  value: z.string(),
+  domain: z.string().optional(),
+  path: z.string().optional(),
+});
+
 const bodySchema = z
   .object({
     url: z.string().url().optional(),
@@ -19,6 +27,8 @@ const bodySchema = z
     navigationTimeoutMs: z.number().min(5_000).max(120_000).optional(),
     /** When true, opens a visible browser for the first URL so the user can log in. */
     openForLogin: z.boolean().optional(),
+    /** Auth cookies to inject into the browser context (enables login-protected pages on headless servers). */
+    cookies: z.array(cookieSchema).max(50).optional(),
   })
   .superRefine((data, ctx) => {
     const hasUrl = Boolean(data.url?.trim());
@@ -70,11 +80,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "No valid URLs" }, { status: 400 });
   }
 
+  const cookies: CookieEntry[] | undefined = body.cookies?.length ? body.cookies : undefined;
+
   if (body.openForLogin) {
     if (!isHeadedModeAvailable()) {
       const opts = {
         waitAfterLoadMs: body.waitAfterLoadMs,
         timeoutMs: body.navigationTimeoutMs,
+        cookies,
       };
       const results: AuditBatchResultItem[] = [];
       for (const u of list) {
@@ -90,7 +103,8 @@ export async function POST(req: Request) {
       return NextResponse.json({
         ok: true,
         batch: list.length > 1,
-        headedUnavailable: true,
+        headedUnavailable: !cookies?.length,
+        cookiesApplied: Boolean(cookies?.length),
         results,
         batchSize: list.length,
       });
@@ -121,6 +135,7 @@ export async function POST(req: Request) {
   const opts = {
     waitAfterLoadMs: body.waitAfterLoadMs,
     timeoutMs: body.navigationTimeoutMs,
+    cookies,
   };
 
   if (list.length === 1) {

@@ -637,9 +637,16 @@ async function captureFromPage(
 /*  Original headless flow (unchanged for public URLs)                 */
 /* ------------------------------------------------------------------ */
 
+export interface CookieEntry {
+  name: string;
+  value: string;
+  domain?: string;
+  path?: string;
+}
+
 export async function capturePageAudit(
   url: string,
-  options: { waitAfterLoadMs?: number; timeoutMs?: number } = {},
+  options: { waitAfterLoadMs?: number; timeoutMs?: number; cookies?: CookieEntry[] } = {},
 ): Promise<AuditSnapshot> {
   const waitAfterLoadMs = options.waitAfterLoadMs ?? 2500;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -650,6 +657,17 @@ export async function capturePageAudit(
     userAgent:
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) LayerLens/1.0 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   });
+
+  if (options.cookies?.length) {
+    const parsedUrl = new URL(url);
+    const playwrightCookies = options.cookies.map((c) => ({
+      name: c.name,
+      value: c.value,
+      domain: c.domain || parsedUrl.hostname,
+      path: c.path || "/",
+    }));
+    await context.addCookies(playwrightCookies);
+  }
   const page = await context.newPage();
   const consoleErrors: string[] = [];
   const pageErrors: string[] = [];

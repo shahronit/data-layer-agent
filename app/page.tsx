@@ -266,6 +266,33 @@ function EventStreamTab({ report }: { report: AuditReport }) {
   );
 }
 
+function parseCookiesFromText(text: string): Array<{ name: string; value: string; domain?: string; path?: string }> {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (Array.isArray(parsed)) {
+      return parsed
+        .filter((c) => c && typeof c === "object" && typeof c.name === "string" && typeof c.value === "string")
+        .map((c) => ({ name: c.name, value: String(c.value), domain: c.domain, path: c.path }));
+    }
+  } catch {
+    /* not JSON — try semicolon-separated format */
+  }
+
+  return trimmed
+    .split(/;\s*/)
+    .map((pair) => pair.trim())
+    .filter(Boolean)
+    .map((pair) => {
+      const eqIdx = pair.indexOf("=");
+      if (eqIdx < 1) return null;
+      return { name: pair.slice(0, eqIdx).trim(), value: pair.slice(eqIdx + 1).trim() };
+    })
+    .filter((c): c is { name: string; value: string } => c !== null);
+}
+
 function parseUrlsFromText(text: string): string[] {
   const lines = text
     .split(/[\n\r]+/)
@@ -317,6 +344,7 @@ export default function HomePage() {
   const [loginWaiting, setLoginWaiting] = useState(false);
   const [loginPageTitle, setLoginPageTitle] = useState<string | null>(null);
   const [loginSessionUrls, setLoginSessionUrls] = useState<string[]>([]);
+  const [cookiesInput, setCookiesInput] = useState("");
 
   const parsedUrls = useMemo(() => parseUrlsFromText(urlsInput), [urlsInput]);
   const urlsValid = parsedUrls.length > 0;
@@ -515,6 +543,7 @@ export default function HomePage() {
     setLoginPageTitle(null);
     setLoginSessionUrls([]);
     try {
+      const parsedCookies = parseCookiesFromText(cookiesInput);
       const body =
         parsedUrls.length === 1
           ? {
@@ -522,12 +551,14 @@ export default function HomePage() {
               waitAfterLoadMs: waitMs,
               navigationTimeoutMs: navTimeoutMs,
               openForLogin: true,
+              ...(parsedCookies.length > 0 ? { cookies: parsedCookies } : {}),
             }
           : {
               urls: parsedUrls,
               waitAfterLoadMs: waitMs,
               navigationTimeoutMs: navTimeoutMs,
               openForLogin: true,
+              ...(parsedCookies.length > 0 ? { cookies: parsedCookies } : {}),
             };
 
       const res = await fetch("/api/audit", {
@@ -547,6 +578,7 @@ export default function HomePage() {
         error?: string;
         hints?: string[];
         headedUnavailable?: boolean;
+        cookiesApplied?: boolean;
       };
       if (!res.ok) {
         const hintBlock = Array.isArray(data.hints) ? `\n\n${data.hints.join("\n")}` : "";
@@ -566,9 +598,11 @@ export default function HomePage() {
 
       if (data.headedUnavailable) {
         setError(
-          "Note: Interactive browser mode is unavailable on this server (no display). " +
-          "The audit ran in headless mode. For pages that require login, run the app locally."
+          "Server mode: the audit ran in headless mode (no interactive browser). " +
+          "To audit login-protected pages, paste your auth cookies below and re-run."
         );
+      } else if (data.cookiesApplied) {
+        setError(null);
       }
 
       const results = data.results;
@@ -587,7 +621,7 @@ export default function HomePage() {
     } finally {
       setLoading(false);
     }
-  }, [parsedUrls, urlsValid, waitMs, navTimeoutMs]);
+  }, [parsedUrls, urlsValid, waitMs, navTimeoutMs, cookiesInput]);
 
   const continueAfterLogin = useCallback(async (sessionIdOverride?: string) => {
     const sid = sessionIdOverride ?? loginSessionId;
@@ -933,7 +967,7 @@ export default function HomePage() {
               <p className="mt-1 text-[11px] text-white/40">
                 {parsedUrls.length} valid URL{parsedUrls.length === 1 ? "" : "s"} detected
                 {parsedUrls.length >= MAX_URLS_PER_RUN ? ` (max ${MAX_URLS_PER_RUN} per run)` : ""}
-                {parsedUrls.length > 0 ? " · a browser window will open first so you can log in or interact before the audit runs" : ""}
+                {parsedUrls.length > 0 ? " · locally a browser window opens for login; on server paste auth cookies below" : ""}
               </p>
 
               <label className="mt-4 block text-xs text-white/45">Extra wait after load (ms)</label>
@@ -956,6 +990,33 @@ export default function HomePage() {
                 value={navTimeoutMs}
                 onChange={(e) => setNavTimeoutMs(Number(e.target.value))}
               />
+
+              <details className="mt-4 rounded-lg border border-white/10 bg-black/25">
+                <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-white/65">
+                  Auth cookies (for login-protected pages)
+                </summary>
+                <div className="px-3 pb-3">
+                  <p className="mt-1 text-[11px] leading-relaxed text-white/40">
+                    Paste cookies from your browser&apos;s DevTools (Application → Cookies). Use
+                    {" "}<code className="text-cyan-300/70">name=value; name2=value2</code> format, or JSON
+                    from the &quot;Export&quot; option.
+                    Cookies are injected into the headless browser so login-protected pages can be audited on the server.
+                  </p>
+                  <textarea
+                    rows={3}
+                    className="report-scroll mt-2 w-full resize-y overflow-y-auto rounded-lg border border-white/10 bg-black/40 px-3 py-2 font-mono text-xs text-white outline-none ring-cyan-500/0 transition focus:border-cyan-500/40 focus:ring-1 focus:ring-cyan-500/25"
+                    value={cookiesInput}
+                    onChange={(e) => setCookiesInput(e.target.value)}
+                    placeholder={'session_id=abc123; auth_token=xyz789'}
+                  />
+                  {cookiesInput.trim() && (
+                    <p className="mt-1 text-[11px] text-cyan-300/60">
+                      {parseCookiesFromText(cookiesInput).length} cookie{parseCookiesFromText(cookiesInput).length === 1 ? "" : "s"} detected
+                    </p>
+                  )}
+                </div>
+              </details>
+
               <button
                 type="button"
                 onClick={runAudit}
