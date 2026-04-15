@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { capturePageAudit, openBrowserForAudit } from "@/lib/audit-engine";
+import { isHeadedModeAvailable } from "@/lib/browser-launch";
 import type { AuditBatchResultItem } from "@/lib/types";
 import { runAutomatedVerification } from "@/lib/verify-rules";
 
@@ -70,6 +71,31 @@ export async function POST(req: Request) {
   }
 
   if (body.openForLogin) {
+    if (!isHeadedModeAvailable()) {
+      const opts = {
+        waitAfterLoadMs: body.waitAfterLoadMs,
+        timeoutMs: body.navigationTimeoutMs,
+      };
+      const results: AuditBatchResultItem[] = [];
+      for (const u of list) {
+        try {
+          const snapshot = await capturePageAudit(u, opts);
+          const report = runAutomatedVerification(snapshot);
+          results.push({ url: u, ok: true, report });
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          results.push({ url: u, ok: false, error: message, report: null });
+        }
+      }
+      return NextResponse.json({
+        ok: true,
+        batch: list.length > 1,
+        headedUnavailable: true,
+        results,
+        batchSize: list.length,
+      });
+    }
+
     try {
       const result = await openBrowserForAudit(list[0], {
         timeoutMs: body.navigationTimeoutMs,

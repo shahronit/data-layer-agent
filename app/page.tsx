@@ -546,6 +546,7 @@ export default function HomePage() {
         results?: AuditBatchResultItem[];
         error?: string;
         hints?: string[];
+        headedUnavailable?: boolean;
       };
       if (!res.ok) {
         const hintBlock = Array.isArray(data.hints) ? `\n\n${data.hints.join("\n")}` : "";
@@ -561,6 +562,13 @@ export default function HomePage() {
         setLoginSessionUrls(data.urls ?? parsedUrls);
         setLoading(false);
         return;
+      }
+
+      if (data.headedUnavailable) {
+        setError(
+          "Note: Interactive browser mode is unavailable on this server (no display). " +
+          "The audit ran in headless mode. For pages that require login, run the app locally."
+        );
       }
 
       const results = data.results;

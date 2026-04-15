@@ -4,6 +4,17 @@ const LAUNCH_ARGS = ["--disable-dev-shm-usage", "--no-sandbox"] as const;
 
 let browserSingleton: Browser | null = null;
 
+/**
+ * Returns true when a headed (visible) browser can be launched.
+ * Headed mode requires a display; on Linux servers without an X server
+ * (and no DISPLAY env var) or when FORCE_HEADLESS=1 is set, this returns false.
+ */
+export function isHeadedModeAvailable(): boolean {
+  if (process.env.FORCE_HEADLESS === "1") return false;
+  if (process.platform === "linux" && !process.env.DISPLAY) return false;
+  return true;
+}
+
 function buildChannelOrder(): Array<"chrome" | "msedge" | "chrome-beta"> {
   const preferred = process.env.PLAYWRIGHT_CHROMIUM_CHANNEL?.trim().toLowerCase();
   const ordered: Array<"chrome" | "msedge" | "chrome-beta"> = [];
@@ -71,10 +82,11 @@ export async function getSharedBrowser(): Promise<Browser> {
 
 /**
  * Launch a standalone headed (visible) browser for interactive login.
+ * Falls back to headless when no display is available (server environment).
  * The caller owns the returned Browser and must close it when done.
  */
 export async function launchHeadedBrowser(): Promise<Browser> {
-  return launchFreshBrowser(false);
+  return launchFreshBrowser(!isHeadedModeAvailable());
 }
 
 export function resetSharedBrowser(): void {
