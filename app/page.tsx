@@ -8,14 +8,23 @@ import { IssuesQueuePanel } from "@/components/IssuesQueuePanel";
 import { ReportMarkdown } from "@/components/ReportMarkdown";
 import { TabStrip } from "@/components/TabStrip";
 import { VerificationReport } from "@/components/VerificationReport";
+import { ScanProgress } from "@/components/ScanProgress";
+import { InteractionTimeline } from "@/components/InteractionTimeline";
+import { CoverageReport } from "@/components/CoverageReport";
+import { ValidationResults } from "@/components/ValidationResults";
+import { ScreenshotGallery } from "@/components/ScreenshotGallery";
+import { SessionReplay } from "@/components/SessionReplay";
+import { JourneyConfig } from "@/components/JourneyConfig";
+import { ScanHistory } from "@/components/ScanHistory";
 import { DEFAULT_AI_CHAT_RULES } from "@/lib/ai-report-defaults";
 import { APP_NAME, APP_TAGLINE, exportFilename } from "@/lib/brand";
 import { detailedReportToHtml } from "@/lib/detailed-report-html";
 import { issuesToCsv, issuesToMarkdown, buildPrioritizedIssues } from "@/lib/issues-engine";
 import type { AuditBatchResultItem, AuditReport, CapturedEventSource } from "@/lib/types";
+import type { ScanProgressEvent } from "@/lib/scan-config";
 import { buildEventStreamSummary, type EventGroup, type EventStreamSummary } from "@/lib/event-grouping";
 
-type Tab = "issues" | "events" | "checks" | "detailed" | "raw" | "ai";
+type Tab = "issues" | "interactions" | "events" | "coverage" | "validation" | "checks" | "screenshots" | "replay" | "detailed" | "raw" | "ai";
 
 function StatusDot({ status }: { status: string }) {
   const map: Record<string, string> = {
@@ -345,6 +354,22 @@ export default function HomePage() {
   const [loginPageTitle, setLoginPageTitle] = useState<string | null>(null);
   const [loginSessionUrls, setLoginSessionUrls] = useState<string[]>([]);
   const [cookiesInput, setCookiesInput] = useState("");
+
+  // Interaction scan state
+  const [scanMode, setScanMode] = useState<"quick" | "deep">("deep");
+  const [scanRunning, setScanRunning] = useState(false);
+  const [scanEvents, setScanEvents] = useState<ScanProgressEvent[]>([]);
+  const [activeScanId, setActiveScanId] = useState<string | null>(null);
+  const [scanData, setScanData] = useState<Record<string, unknown> | null>(null);
+  const [scanInteractions, setScanInteractions] = useState<Array<Record<string, unknown>>>([]);
+  const [scanCoverage, setScanCoverage] = useState<Record<string, unknown> | null>(null);
+  const [scanValidation, setScanValidation] = useState<{ results: Array<Record<string, unknown>>; summary: { pass: number; fail: number; warn: number } } | null>(null);
+  const [scanScreenshots, setScanScreenshots] = useState<Array<{ filepath: string }>>([]);
+  const [scanReplay, setScanReplay] = useState<{ steps: Array<Record<string, unknown>>; pageLoad: Record<string, unknown> } | null>(null);
+  const [enableScreenshots, setEnableScreenshots] = useState(true);
+  const [enableAi, setEnableAi] = useState(false);
+  const [maxElements, setMaxElements] = useState(120);
+  const [showJourney, setShowJourney] = useState(false);
 
   const parsedUrls = useMemo(() => parseUrlsFromText(urlsInput), [urlsInput]);
   const urlsValid = parsedUrls.length > 0;
@@ -692,6 +717,124 @@ export default function HomePage() {
     setLoading(false);
   }, [loginSessionId]);
 
+  const runDeepScan = useCallback(async (journeySteps?: Array<{ url: string; label: string; interactionDepth: "full" | "targeted"; targetActions?: string[] }>) => {
+    const parsedCookies = parseCookiesFromText(cookiesInput);
+    setScanRunning(true);
+    setScanEvents([]);
+    setActiveScanId(null);
+    setScanData(null);
+    setScanInteractions([]);
+    setScanCoverage(null);
+    setScanValidation(null);
+    setScanScreenshots([]);
+    setScanReplay(null);
+    setError(null);
+    setBatchResults(null);
+
+    try {
+      const body: Record<string, unknown> = journeySteps
+        ? { journey: journeySteps }
+        : { url: parsedUrls[0] };
+      body.waitAfterLoadMs = waitMs;
+      body.navigationTimeoutMs = navTimeoutMs;
+      body.maxElements = maxElements;
+      body.enableScreenshots = enableScreenshots;
+      body.enableAi = enableAi;
+      body.schemas = ["ga4", "adobe"];
+      if (parsedCookies.length > 0) body.cookies = parsedCookies;
+
+      const res = await fetch("/api/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        setError(data.error || "Scan failed");
+        setScanRunning(false);
+        return;
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) { setError("No response stream"); setScanRunning(false); return; }
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let lastScanId: string | null = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(line.slice(6)) as ScanProgressEvent;
+            setScanEvents((prev) => [...prev, event]);
+            if (event.scanId) lastScanId = event.scanId;
+            if (event.type === "complete" && event.scanId) {
+              setActiveScanId(event.scanId);
+            }
+          } catch { /* skip malformed */ }
+        }
+      }
+
+      if (lastScanId) {
+        setActiveScanId(lastScanId);
+        // Fetch full results
+        const [scanRes, ixRes, covRes, valRes, replayRes] = await Promise.all([
+          fetch(`/api/scan/${lastScanId}`).then((r) => r.json()).catch(() => null),
+          fetch(`/api/scan/${lastScanId}/interactions`).then((r) => r.json()).catch(() => null),
+          fetch(`/api/scan/${lastScanId}/coverage`).then((r) => r.json()).catch(() => null),
+          fetch(`/api/scan/${lastScanId}/validation`).then((r) => r.json()).catch(() => null),
+          fetch(`/api/scan/${lastScanId}/replay`).then((r) => r.json()).catch(() => null),
+        ]);
+        if (scanRes?.ok) setScanData(scanRes);
+        if (ixRes?.ok) setScanInteractions(ixRes.interactions || []);
+        if (covRes?.ok) setScanCoverage(covRes);
+        if (valRes?.ok) setScanValidation({ results: valRes.results || [], summary: valRes.summary || { pass: 0, fail: 0, warn: 0 } });
+        if (replayRes?.ok) setScanReplay({ steps: replayRes.steps || [], pageLoad: replayRes.pageLoad || { events: [], screenshots: [] } });
+
+        // Extract screenshots from interactions
+        const ss = (ixRes?.interactions || [])
+          .filter((ix: Record<string, unknown>) => ix.screenshot_path)
+          .map((ix: Record<string, unknown>) => ({ filepath: ix.screenshot_path as string }));
+        setScanScreenshots(ss);
+
+        setTab("interactions");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Deep scan failed");
+    } finally {
+      setScanRunning(false);
+    }
+  }, [parsedUrls, waitMs, navTimeoutMs, cookiesInput, maxElements, enableScreenshots, enableAi]);
+
+  const loadScanResults = useCallback(async (scanId: string) => {
+    setActiveScanId(scanId);
+    try {
+      const [scanRes, ixRes, covRes, valRes, replayRes] = await Promise.all([
+        fetch(`/api/scan/${scanId}`).then((r) => r.json()).catch(() => null),
+        fetch(`/api/scan/${scanId}/interactions`).then((r) => r.json()).catch(() => null),
+        fetch(`/api/scan/${scanId}/coverage`).then((r) => r.json()).catch(() => null),
+        fetch(`/api/scan/${scanId}/validation`).then((r) => r.json()).catch(() => null),
+        fetch(`/api/scan/${scanId}/replay`).then((r) => r.json()).catch(() => null),
+      ]);
+      if (scanRes?.ok) setScanData(scanRes);
+      if (ixRes?.ok) setScanInteractions(ixRes.interactions || []);
+      if (covRes?.ok) setScanCoverage(covRes);
+      if (valRes?.ok) setScanValidation({ results: valRes.results || [], summary: valRes.summary || { pass: 0, fail: 0, warn: 0 } });
+      if (replayRes?.ok) setScanReplay({ steps: replayRes.steps || [], pageLoad: replayRes.pageLoad || { events: [], screenshots: [] } });
+      const ss = (ixRes?.interactions || [])
+        .filter((ix: Record<string, unknown>) => ix.screenshot_path)
+        .map((ix: Record<string, unknown>) => ({ filepath: ix.screenshot_path as string }));
+      setScanScreenshots(ss);
+      setTab("interactions");
+    } catch { /* ignore */ }
+  }, []);
+
   const exportMarkdown = useCallback(() => {
     if (!aiMarkdown) return;
     const blob = new Blob([aiMarkdown], { type: "text/markdown;charset=utf-8" });
@@ -799,13 +942,20 @@ export default function HomePage() {
     () =>
       [
         { id: "issues" as const, label: "Issues" },
+        ...(activeScanId ? [
+          { id: "interactions" as const, label: "Interactions" },
+          { id: "coverage" as const, label: "Coverage" },
+          { id: "validation" as const, label: "Validation" },
+          ...(scanScreenshots.length > 0 ? [{ id: "screenshots" as const, label: "Screenshots" }] : []),
+          ...(scanReplay ? [{ id: "replay" as const, label: "Replay" }] : []),
+        ] : []),
         ...(hasEventStream ? [{ id: "events" as const, label: "Events" }] : []),
         { id: "checks" as const, label: "All checks" },
         { id: "detailed" as const, label: "Full report" },
         { id: "raw" as const, label: "Raw data" },
         { id: "ai" as const, label: "AI report" },
       ] as const,
-    [hasEventStream],
+    [hasEventStream, activeScanId, scanScreenshots.length, scanReplay],
   );
 
   return (
@@ -857,9 +1007,9 @@ export default function HomePage() {
           </div>
         )}
         {!sidebarCollapsed ? (
-          <p className="border-t border-white/10 p-4 text-[11px] leading-relaxed text-white/40">
-            One snapshot per URL. Up to {MAX_URLS_PER_RUN} URLs per run, separate reports. Optional AI summary.
-          </p>
+          <div className="border-t border-white/10 p-3">
+            <ScanHistory onSelectScan={loadScanResults} />
+          </div>
         ) : null}
         <div className={`mt-auto border-t border-white/10 ${sidebarCollapsed ? "p-2" : "p-3"}`}>
           <button
@@ -991,6 +1141,51 @@ export default function HomePage() {
                 onChange={(e) => setNavTimeoutMs(Number(e.target.value))}
               />
 
+              <div className="mt-4 flex items-center gap-2">
+                <label className="text-xs text-white/45">Scan mode</label>
+                <div className="flex rounded-lg border border-white/10">
+                  <button type="button" onClick={() => setScanMode("quick")}
+                    className={`px-3 py-1.5 text-[11px] font-medium transition ${scanMode === "quick" ? "bg-violet-500/20 text-white" : "text-white/40 hover:text-white/60"}`}>
+                    Quick
+                  </button>
+                  <button type="button" onClick={() => setScanMode("deep")}
+                    className={`px-3 py-1.5 text-[11px] font-medium transition ${scanMode === "deep" ? "bg-violet-500/20 text-white" : "text-white/40 hover:text-white/60"}`}>
+                    Deep Scan
+                  </button>
+                </div>
+              </div>
+
+              {scanMode === "deep" && (
+                <div className="mt-3 space-y-2 rounded-lg border border-violet-500/15 bg-violet-500/5 px-3 py-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] text-white/50">Max elements</label>
+                    <input type="number" min={10} max={500} value={maxElements} onChange={(e) => setMaxElements(Number(e.target.value))}
+                      className="w-16 rounded border border-white/10 bg-black/40 px-2 py-0.5 text-[11px] text-white outline-none" />
+                  </div>
+                  <label className="flex items-center gap-2 text-[11px] text-white/50">
+                    <input type="checkbox" checked={enableScreenshots} onChange={(e) => setEnableScreenshots(e.target.checked)} className="rounded" />
+                    Capture screenshots
+                  </label>
+                  <label className="flex items-center gap-2 text-[11px] text-white/50">
+                    <input type="checkbox" checked={enableAi} onChange={(e) => setEnableAi(e.target.checked)} className="rounded" />
+                    AI anomaly detection
+                  </label>
+                  <button type="button" onClick={() => setShowJourney((j) => !j)}
+                    className="text-[11px] text-cyan-400 hover:underline">
+                    {showJourney ? "Hide" : "Show"} multi-page journey
+                  </button>
+                </div>
+              )}
+
+              {showJourney && scanMode === "deep" && (
+                <div className="mt-3">
+                  <JourneyConfig
+                    onStartJourney={(steps) => runDeepScan(steps)}
+                    disabled={loading || scanRunning}
+                  />
+                </div>
+              )}
+
               <details className="mt-4 rounded-lg border border-white/10 bg-black/25">
                 <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-white/65">
                   Auth cookies (for login-protected pages)
@@ -1019,23 +1214,37 @@ export default function HomePage() {
 
               <button
                 type="button"
-                onClick={runAudit}
-                disabled={loading || !urlsValid}
+                onClick={() => {
+                  if (scanMode === "deep" && !showJourney) {
+                    runDeepScan();
+                  } else {
+                    runAudit();
+                  }
+                }}
+                disabled={loading || scanRunning || !urlsValid}
                 className="tl-shimmer-btn mt-6 w-full rounded-xl bg-gradient-to-r from-violet-600 via-violet-500 to-cyan-600 py-3.5 text-sm font-bold text-white shadow-lg shadow-violet-600/30 transition hover:shadow-violet-500/45 hover:brightness-[1.08] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100"
               >
                 <span className="relative z-[1] inline-flex items-center justify-center gap-2">
-                  {loading ? (
+                  {loading || scanRunning ? (
                     <>
                       <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white motion-reduce:animate-none" />
-                      {parsedUrls.length > 1 ? `Checking ${parsedUrls.length} pages…` : "Checking page…"}
+                      {scanRunning ? "Deep scanning…" : parsedUrls.length > 1 ? `Checking ${parsedUrls.length} pages…` : "Checking page…"}
                     </>
+                  ) : scanMode === "deep" ? (
+                    parsedUrls.length > 1 ? `Deep scan (${parsedUrls.length} URLs)` : "Run deep scan"
                   ) : parsedUrls.length > 1 ? (
-                    `Run check (${parsedUrls.length} URLs)`
+                    `Quick check (${parsedUrls.length} URLs)`
                   ) : (
-                    "Run check"
+                    "Run quick check"
                   )}
                 </span>
               </button>
+
+              {scanRunning && (
+                <div className="mt-3">
+                  <ScanProgress events={scanEvents} isRunning={scanRunning} />
+                </div>
+              )}
               {loginWaiting && loginSessionId && (
                 <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-4">
                   <div className="flex items-start gap-3">
@@ -1281,13 +1490,64 @@ export default function HomePage() {
           </section>
 
           <section className="tl-glass flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/10 shadow-[0_24px_80px_-24px_rgba(0,0,0,0.75)] ring-1 ring-violet-500/10">
-            {!batchResults ? (
+            {!batchResults && !activeScanId ? (
               <div className="report-scroll flex flex-1 flex-col items-center justify-center overflow-y-auto p-8 text-center">
                 <EmptyStateHero />
               </div>
+            ) : !batchResults && activeScanId ? (
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                <div className="flex shrink-0 flex-wrap items-start justify-between gap-4 border-b border-white/10 p-5">
+                  <div className="flex flex-wrap items-center gap-5">
+                    <div className="tl-score-ring-anim relative h-[7.5rem] w-[7.5rem] shrink-0 rounded-full p-[3px]" style={{ background: `conic-gradient(from 210deg, #a78bfa ${((scanData as Record<string, unknown>)?.session as Record<string, unknown>)?.score ? ((((scanData as Record<string, unknown>)?.session as Record<string, unknown>)?.score as number) * 3.6) : 0}deg, rgba(255,255,255,0.08) 0deg)` }}>
+                      <div className="flex h-full w-full flex-col items-center justify-center rounded-full bg-[#0c0c12]">
+                        <span className="bg-gradient-to-br from-white to-slate-400 bg-clip-text font-display text-3xl font-bold tracking-tight text-transparent">
+                          {String(((scanData as Record<string, unknown>)?.session as Record<string, unknown>)?.score ?? "—")}
+                        </span>
+                        <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/35">Score</span>
+                      </div>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-white/40">Deep Scan</p>
+                      <p className="mt-1 max-w-xl truncate font-medium text-white">
+                        {((scanData as Record<string, unknown>)?.session as Record<string, unknown>)?.url as string || ""}
+                      </p>
+                      <div className="mt-2 flex gap-3 text-xs text-white/40">
+                        <span>{scanInteractions.length} interactions</span>
+                        {scanCoverage && <span>{String((scanCoverage as Record<string, unknown>).coveragePct)}% coverage</span>}
+                        {scanValidation && <span>{scanValidation.summary.pass} pass / {scanValidation.summary.fail} fail</span>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <TabStrip tabs={[...tabDefs]} active={tab} onChange={setTab} />
+                <div className="report-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5">
+                  {tab === "interactions" && activeScanId && (
+                    <InteractionTimeline
+                      interactions={scanInteractions as Array<{id:string;element_tag:string;element_text:string;element_category:string;interaction_type:string;order_index:number;duration_ms:number;error:string|null;screenshot_path:string|null;diff_json:string|null}>}
+                      scanId={activeScanId}
+                    />
+                  )}
+                  {tab === "coverage" && <CoverageReport data={scanCoverage as {totalElements:number;testedElements:number;coveragePct:number;untestedElements:Array<{selector:string;tag:string;text:string;category:string}>} | null} />}
+                  {tab === "validation" && scanValidation && (
+                    <ValidationResults
+                      results={scanValidation.results as Array<{id:string;schema_name:string;status:string;errors:Array<{field:string;message:string;severity:string}>}>}
+                      summary={scanValidation.summary}
+                    />
+                  )}
+                  {tab === "screenshots" && activeScanId && <ScreenshotGallery screenshots={scanScreenshots as Array<{filepath:string}>} scanId={activeScanId} />}
+                  {tab === "replay" && activeScanId && scanReplay && (
+                    <SessionReplay
+                      steps={scanReplay.steps as Array<{index:number;element:{selector:string;tag:string;text:string;category:string};interactionType:string;durationMs:number;error:string|null;diff:unknown;events:Array<{source:string;event_name:string;payload:unknown}>;screenshots:string[]}>}
+                      pageLoad={scanReplay.pageLoad as {events:Array<{source:string;event_name:string;payload:unknown}>;screenshots:string[]}}
+                      scanId={activeScanId}
+                    />
+                  )}
+                  {tab === "issues" && <p className="text-sm text-white/45">Run a quick check to see detailed issues.</p>}
+                </div>
+              </div>
             ) : !report ? (
               <div className="report-scroll flex flex-1 flex-col gap-4 overflow-y-auto p-6">
-                {batchResults.length > 1 ? (
+                {batchResults && batchResults.length > 1 ? (
                   <div className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3">
                     <label className="block text-[11px] font-medium text-white/50">Show result for</label>
                     <select
@@ -1295,7 +1555,7 @@ export default function HomePage() {
                       value={selectedBatchIndex}
                       onChange={(e) => setSelectedBatchIndex(Number(e.target.value))}
                     >
-                      {batchResults.map((r, i) => (
+                      {batchResults?.map((r, i) => (
                         <option key={`${r.url}-${i}`} value={i}>
                           {r.ok ? `${r.url} · score ${r.report?.score ?? "—"}` : `${r.url} · failed`}
                         </option>
@@ -1306,13 +1566,13 @@ export default function HomePage() {
                 <div className="rounded-xl border border-rose-500/25 bg-rose-500/10 px-5 py-6 text-sm text-rose-100">
                   <p className="font-medium text-white">No report for this URL</p>
                   <p className="mt-2 text-white/70">
-                    {batchResults[selectedBatchIndex]?.error || "Unknown error."}
+                    {batchResults?.[selectedBatchIndex]?.error || "Unknown error."}
                   </p>
                 </div>
               </div>
             ) : (
               <>
-                {batchResults.length > 1 ? (
+                {batchResults && batchResults.length > 1 ? (
                   <div className="flex shrink-0 flex-col gap-2 border-b border-white/10 bg-black/20 px-5 py-3 sm:flex-row sm:items-end sm:justify-between">
                     <div className="min-w-0 flex-1">
                       <label className="text-[11px] font-medium text-white/50">Report for</label>
@@ -1324,7 +1584,7 @@ export default function HomePage() {
                           setTab("issues");
                         }}
                       >
-                        {batchResults.map((r, i) => (
+                        {batchResults?.map((r, i) => (
                           <option key={`${r.url}-${i}`} value={i}>
                             {r.ok ? `${r.url} · ${r.report?.score ?? "—"}/100` : `${r.url} · failed`}
                           </option>
@@ -1332,8 +1592,8 @@ export default function HomePage() {
                       </select>
                     </div>
                     <p className="text-[11px] text-white/45">
-                      {batchResults.filter((r) => r.ok).length} ok · {batchResults.filter((r) => !r.ok).length} failed ·{" "}
-                      {batchResults.length} total
+                      {batchResults?.filter((r) => r.ok).length ?? 0} ok · {batchResults?.filter((r) => !r.ok).length ?? 0} failed ·{" "}
+                      {batchResults?.length ?? 0} total
                     </p>
                   </div>
                 ) : null}
@@ -1405,6 +1665,34 @@ export default function HomePage() {
                       report={report}
                       jiraConfigured={jiraConfigured}
                       onRefreshJira={refreshJiraConfigured}
+                    />
+                  )}
+                  {tab === "interactions" && activeScanId && (
+                    <InteractionTimeline
+                      interactions={scanInteractions as Array<{id:string;element_tag:string;element_text:string;element_category:string;interaction_type:string;order_index:number;duration_ms:number;error:string|null;screenshot_path:string|null;diff_json:string|null;events?:Array<{event_name:string;source:string;payload_json:string}>;validations?:Array<{schema_name:string;status:string;errors_json:string|null}>}>}
+                      scanId={activeScanId}
+                    />
+                  )}
+                  {tab === "coverage" && (
+                    <CoverageReport data={scanCoverage as {totalElements:number;testedElements:number;coveragePct:number;untestedElements:Array<{selector:string;tag:string;text:string;category:string}>;byCategory?:Record<string,{total:number;tested:number;pct:number}>} | null} />
+                  )}
+                  {tab === "validation" && scanValidation && (
+                    <ValidationResults
+                      results={scanValidation.results as Array<{id:string;schema_name:string;status:string;errors:Array<{field:string;message:string;severity:string}>;element_text?:string;element_category?:string;order_index?:number}>}
+                      summary={scanValidation.summary}
+                    />
+                  )}
+                  {tab === "screenshots" && activeScanId && (
+                    <ScreenshotGallery
+                      screenshots={scanScreenshots as Array<{filepath:string;interactionIndex?:number;label?:string}>}
+                      scanId={activeScanId}
+                    />
+                  )}
+                  {tab === "replay" && activeScanId && scanReplay && (
+                    <SessionReplay
+                      steps={scanReplay.steps as Array<{index:number;element:{selector:string;tag:string;text:string;category:string};interactionType:string;durationMs:number;error:string|null;diff:unknown;events:Array<{source:string;event_name:string;payload:unknown}>;screenshots:string[]}>}
+                      pageLoad={scanReplay.pageLoad as {events:Array<{source:string;event_name:string;payload:unknown}>;screenshots:string[]}}
+                      scanId={activeScanId}
                     />
                   )}
                   {tab === "events" && hasEventStream && (

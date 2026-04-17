@@ -8,6 +8,8 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # Install browsers here (full node_modules from npm ci). Next standalone does not ship playwright's CLI.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright-browsers
 
+RUN apt-get update && apt-get install -y python3 build-essential && rm -rf /var/lib/apt/lists/*
+
 COPY package.json package-lock.json ./
 RUN npm ci
 
@@ -35,7 +37,9 @@ COPY --from=builder /ms-playwright-browsers /ms-playwright-browsers
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/node_modules/better-sqlite3 ./node_modules/better-sqlite3
 
+RUN mkdir -p /app/data/screenshots && chmod -R a+rwx /app/data
 RUN chmod -R a+rx /ms-playwright-browsers
 
 EXPOSE 3000
