@@ -8,6 +8,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # Install browsers here (full node_modules from npm ci). Next standalone does not ship playwright's CLI.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright-browsers
 
+# build-essential + python3 needed for better-sqlite3 native compilation
 RUN apt-get update && apt-get install -y python3 build-essential && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./
@@ -37,11 +38,25 @@ COPY --from=builder /ms-playwright-browsers /ms-playwright-browsers
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/node_modules/better-sqlite3 ./node_modules/better-sqlite3
 
+# better-sqlite3 native addon — copy the module and its transitive native deps
+COPY --from=builder /app/node_modules/better-sqlite3 ./node_modules/better-sqlite3
+COPY --from=builder /app/node_modules/bindings ./node_modules/bindings
+COPY --from=builder /app/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
+COPY --from=builder /app/node_modules/prebuild-install ./node_modules/prebuild-install
+
+# CI scan script (optional — enables `docker exec <ctr> node scripts/ci-scan.mjs ...`)
+COPY --from=builder /app/scripts ./scripts
+
+# Persistent data directory — SQLite DB + screenshots.
+# Mount a volume here in production to survive container restarts.
 RUN mkdir -p /app/data/screenshots && chmod -R a+rwx /app/data
+
 RUN chmod -R a+rx /ms-playwright-browsers
 
 EXPOSE 3000
+
+# Use VOLUME so compose/render can auto-attach a persistent disk
+VOLUME ["/app/data"]
 
 CMD ["node", "server.js"]

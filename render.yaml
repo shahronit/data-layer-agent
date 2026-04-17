@@ -11,6 +11,12 @@ services:
     dockerfilePath: ./Dockerfile
     plan: free
     healthCheckPath: /api/health
+    # Persistent disk for SQLite database and screenshots.
+    # Data survives deploys and container restarts.
+    disk:
+      name: layerlens-data
+      mountPath: /app/data
+      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
