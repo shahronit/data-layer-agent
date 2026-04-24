@@ -761,6 +761,8 @@ export default function HomePage() {
       const decoder = new TextDecoder();
       let buffer = "";
       let lastScanId: string | null = null;
+      let gotComplete = false;
+      const collectedEvents: ScanProgressEvent[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -772,16 +774,19 @@ export default function HomePage() {
           if (!line.startsWith("data: ")) continue;
           try {
             const event = JSON.parse(line.slice(6)) as ScanProgressEvent;
+            collectedEvents.push(event);
             setScanEvents((prev) => [...prev, event]);
             if (event.scanId) lastScanId = event.scanId;
             if (event.type === "complete" && event.scanId) {
-              setActiveScanId(event.scanId);
+              gotComplete = true;
             }
           } catch { /* skip malformed */ }
         }
       }
 
-      if (lastScanId) {
+      const hasError = collectedEvents.some((e) => e.type === "error");
+
+      if (lastScanId && (gotComplete || !hasError)) {
         setActiveScanId(lastScanId);
         // Fetch full results
         const [scanRes, ixRes, covRes, valRes, replayRes] = await Promise.all([
@@ -804,6 +809,11 @@ export default function HomePage() {
         setScanScreenshots(ss);
 
         setTab("interactions");
+      } else if (hasError) {
+        const errorEvents = collectedEvents.filter((e) => e.type === "error");
+        const errorMsg = errorEvents.map(e => e.message).join("; ") || "Deep scan failed";
+        setError(errorMsg);
+        setActiveScanId(null);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Deep scan failed");
@@ -1240,7 +1250,7 @@ export default function HomePage() {
                 </span>
               </button>
 
-              {scanRunning && (
+              {(scanRunning || scanEvents.length > 0) && (
                 <div className="mt-3">
                   <ScanProgress events={scanEvents} isRunning={scanRunning} />
                 </div>

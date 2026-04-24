@@ -1,5 +1,5 @@
 import type { Browser, BrowserContext, Page } from "playwright";
-import { getSharedBrowser, launchHeadedBrowser, isHeadedModeAvailable } from "./browser-launch";
+import { getSharedBrowser } from "./browser-launch";
 import { detectInteractiveElements } from "./interaction/detector";
 import { buildInteractionPlan, detectModalOpened, closeModal } from "./interaction/planner";
 import { executeInteraction } from "./interaction/executor";
@@ -79,6 +79,14 @@ async function extractPageLoadSnapshot(page: Page): Promise<AuditSnapshot> {
     loadMs: Date.now() - started,
     ...extracted,
     consoleErrors: [],
+    networkRequests: [],
+    failedRequests: [],
+    interactiveSampledCount: 0,
+    interactiveMissingBothAttrsCount: 0,
+    interactiveMissingDataTrackIdCount: 0,
+    interactiveMissingDataTrackOnlyCount: 0,
+    interactiveGapSamples: [],
+    adobeAnalyticsHits: [],
   };
 }
 
@@ -94,15 +102,9 @@ export async function* runInteractionScan(
 
   let browser: Browser;
   let context: BrowserContext;
-  let ownsBrowser = false;
 
   try {
-    if (isHeadedModeAvailable()) {
-      browser = await launchHeadedBrowser();
-      ownsBrowser = true;
-    } else {
-      browser = await getSharedBrowser();
-    }
+    browser = await getSharedBrowser();
 
     context = await browser.newContext({
       viewport: { width: 1365, height: 900 },
@@ -299,7 +301,6 @@ export async function* runInteractionScan(
     yield { type: "complete", scanId, message: "Scan complete", data: summary };
 
     await context.close().catch(() => {});
-    if (ownsBrowser) await browser.close().catch(() => {});
 
     return {
       scanId,
@@ -313,8 +314,17 @@ export async function* runInteractionScan(
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    finishScanSession(db, scanId, "failed", null, JSON.stringify({ error: message }));
+    try { finishScanSession(db, scanId, "failed", null, JSON.stringify({ error: message })); } catch { /* db may also fail */ }
     yield { type: "error", scanId, message: `Scan failed: ${message}` };
-    throw err;
+    return {
+      scanId,
+      url: options.url,
+      score: 0,
+      totalInteractions: 0,
+      successfulInteractions: 0,
+      coveragePct: 0,
+      validationSummary: { pass: 0, fail: 0, warn: 0 },
+      durationMs: Date.now() - startTime,
+    };
   }
 }
