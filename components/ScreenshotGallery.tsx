@@ -13,6 +13,16 @@ interface Props {
   scanId: string;
 }
 
+function screenshotUrl(storedPath: string, fallbackScanId: string): string {
+  const parts = storedPath.split("/");
+  if (parts.length >= 2) {
+    const file = parts.pop() as string;
+    const dir = parts.join("/");
+    return `/api/scan/${dir}/screenshots/${file}`;
+  }
+  return `/api/scan/${fallbackScanId}/screenshots/${storedPath}`;
+}
+
 export function ScreenshotGallery({ screenshots, scanId }: Props) {
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
 
@@ -39,7 +49,7 @@ export function ScreenshotGallery({ screenshots, scanId }: Props) {
               }`}
             >
               <img
-                src={`/api/scan/${scanId}/screenshots/${filename}`}
+                src={screenshotUrl(ss.filepath, scanId)}
                 alt={ss.label || `Screenshot ${i + 1}`}
                 className="aspect-video w-full object-cover transition group-hover:brightness-110"
                 loading="lazy"
@@ -67,7 +77,7 @@ export function ScreenshotGallery({ screenshots, scanId }: Props) {
             </button>
           </div>
           <img
-            src={`/api/scan/${scanId}/screenshots/${screenshots[selectedIdx].filepath.split("/").pop()}`}
+            src={screenshotUrl(screenshots[selectedIdx].filepath, scanId)}
             alt="Full size screenshot"
             className="w-full rounded-lg border border-white/5"
           />

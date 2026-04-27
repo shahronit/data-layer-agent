@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getDb } from "@/lib/db/client";
+import { buildInClause, getDb, getEffectiveScanIds } from "@/lib/db/client";
 
 export const runtime = "nodejs";
 
@@ -10,15 +10,17 @@ export async function GET(
   const { id } = await params;
   try {
     const db = getDb();
+    const ids = getEffectiveScanIds(db, id);
+    const { placeholders, values } = buildInClause(ids);
 
     const interactions = db.prepare(
       `SELECT i.*, GROUP_CONCAT(ce.event_name, '||') as event_names
        FROM interactions i
        LEFT JOIN captured_events ce ON ce.interaction_id = i.id
-       WHERE i.scan_id = ?
+       WHERE i.scan_id IN (${placeholders})
        GROUP BY i.id
-       ORDER BY i.order_index`,
-    ).all(id) as Array<Record<string, unknown>>;
+       ORDER BY i.scan_id, i.order_index`,
+    ).all(...values) as Array<Record<string, unknown>>;
 
     const detailed = interactions.map((row) => {
       const events = db.prepare(

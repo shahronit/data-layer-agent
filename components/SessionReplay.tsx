@@ -24,6 +24,16 @@ interface Props {
   scanId: string;
 }
 
+function screenshotUrl(storedPath: string, fallbackScanId: string): string {
+  const parts = storedPath.split("/");
+  if (parts.length >= 2) {
+    const file = parts.pop() as string;
+    const dir = parts.join("/");
+    return `/api/scan/${dir}/screenshots/${file}`;
+  }
+  return `/api/scan/${fallbackScanId}/screenshots/${storedPath}`;
+}
+
 export function SessionReplay({ steps, pageLoad, scanId }: Props) {
   const [currentStep, setCurrentStep] = useState(-1); // -1 = page load
 
@@ -111,7 +121,7 @@ export function SessionReplay({ steps, pageLoad, scanId }: Props) {
 
         {activeScreenshots.length > 0 && (
           <img
-            src={`/api/scan/${scanId}/screenshots/${activeScreenshots[0].split("/").pop()}`}
+            src={screenshotUrl(activeScreenshots[0], scanId)}
             alt="Step screenshot"
             className="rounded-lg border border-white/10 max-h-56 object-contain"
           />

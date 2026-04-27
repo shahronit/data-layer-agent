@@ -14,6 +14,10 @@ import { CoverageReport } from "@/components/CoverageReport";
 import { ValidationResults } from "@/components/ValidationResults";
 import { ScreenshotGallery } from "@/components/ScreenshotGallery";
 import { SessionReplay } from "@/components/SessionReplay";
+import { DeepScanIssues } from "@/components/DeepScanIssues";
+import { DeepScanChecks } from "@/components/DeepScanChecks";
+import { DeepScanFullReport } from "@/components/DeepScanFullReport";
+import { DeepScanEvents } from "@/components/DeepScanEvents";
 import { JourneyConfig } from "@/components/JourneyConfig";
 import { ScanHistory } from "@/components/ScanHistory";
 import { DEFAULT_AI_CHAT_RULES } from "@/lib/ai-report-defaults";
@@ -366,10 +370,31 @@ export default function HomePage() {
   const [scanValidation, setScanValidation] = useState<{ results: Array<Record<string, unknown>>; summary: { pass: number; fail: number; warn: number } } | null>(null);
   const [scanScreenshots, setScanScreenshots] = useState<Array<{ filepath: string }>>([]);
   const [scanReplay, setScanReplay] = useState<{ steps: Array<Record<string, unknown>>; pageLoad: Record<string, unknown> } | null>(null);
+
+  // Multi-URL deep-scan: cached list of journey steps from the parent scan
+  // and the currently-selected sub-scan id (null = aggregate / all steps).
+  const [journeyStepsList, setJourneyStepsList] = useState<Array<{
+    id: string; scan_id: string; step_index: number; url: string; label: string | null;
+    action_type: string | null; status: string; sub_scan_id: string | null;
+  }> | null>(null);
+  const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
+
   const [enableScreenshots, setEnableScreenshots] = useState(true);
   const [enableAi, setEnableAi] = useState(false);
   const [maxElements, setMaxElements] = useState(120);
   const [showJourney, setShowJourney] = useState(false);
+  // Lifted multi-page-journey state so the bottom "Run deep scan" button can
+  // also kick off the configured journey, not only the in-panel button.
+  const [journeyConfigSteps, setJourneyConfigSteps] = useState<Array<{
+    url: string; label: string; interactionDepth: "full" | "targeted"; targetActions?: string[];
+  }>>([{ url: "", label: "Page 1", interactionDepth: "full" }]);
+  const validJourneySteps = useMemo(
+    () =>
+      journeyConfigSteps.filter((s) => {
+        try { new URL(s.url); return true; } catch { return false; }
+      }),
+    [journeyConfigSteps],
+  );
 
   const parsedUrls = useMemo(() => parseUrlsFromText(urlsInput), [urlsInput]);
   const urlsValid = parsedUrls.length > 0;
@@ -554,8 +579,14 @@ export default function HomePage() {
     }
   }, [sidebarCollapsed, sidebarHydrated]);
 
-  const runAudit = useCallback(async () => {
-    if (!urlsValid) {
+  const runAudit = useCallback(async (urlsOverride?: string[]) => {
+    // Allow callers (e.g. the multi-page journey panel) to pass an explicit
+    // URL list. When omitted we fall back to the URLs typed into the textarea.
+    const urlsToCheck = (urlsOverride && urlsOverride.length > 0)
+      ? urlsOverride
+      : parsedUrls;
+
+    if (urlsToCheck.length === 0) {
       setError(`Add at least one valid URL (one per line, up to ${MAX_URLS_PER_RUN}).`);
       return;
     }
@@ -570,16 +601,16 @@ export default function HomePage() {
     try {
       const parsedCookies = parseCookiesFromText(cookiesInput);
       const body =
-        parsedUrls.length === 1
+        urlsToCheck.length === 1
           ? {
-              url: parsedUrls[0],
+              url: urlsToCheck[0],
               waitAfterLoadMs: waitMs,
               navigationTimeoutMs: navTimeoutMs,
               openForLogin: true,
               ...(parsedCookies.length > 0 ? { cookies: parsedCookies } : {}),
             }
           : {
-              urls: parsedUrls,
+              urls: urlsToCheck,
               waitAfterLoadMs: waitMs,
               navigationTimeoutMs: navTimeoutMs,
               openForLogin: true,
@@ -616,7 +647,7 @@ export default function HomePage() {
         setLoginSessionId(data.sessionId);
         setLoginWaiting(true);
         setLoginPageTitle(data.pageTitle ?? null);
-        setLoginSessionUrls(data.urls ?? parsedUrls);
+        setLoginSessionUrls(data.urls ?? urlsToCheck);
         setLoading(false);
         return;
       }
@@ -646,7 +677,7 @@ export default function HomePage() {
     } finally {
       setLoading(false);
     }
-  }, [parsedUrls, urlsValid, waitMs, navTimeoutMs, cookiesInput]);
+  }, [parsedUrls, waitMs, navTimeoutMs, cookiesInput]);
 
   const continueAfterLogin = useCallback(async (sessionIdOverride?: string) => {
     const sid = sessionIdOverride ?? loginSessionId;
@@ -717,6 +748,42 @@ export default function HomePage() {
     setLoading(false);
   }, [loginSessionId]);
 
+  // Fetch a deep-scan's data fan-out (interactions / coverage / validation / replay
+  // and the parent session) for either the journey root or a specific sub-scan.
+  // `keepJourneyList` keeps the cached `journeyStepsList` intact so the step
+  // selector survives switching between steps.
+  const loadDeepScanData = useCallback(async (scanId: string, keepJourneyList = false) => {
+    const [scanRes, ixRes, covRes, valRes, replayRes] = await Promise.all([
+      fetch(`/api/scan/${scanId}`).then((r) => r.json()).catch(() => null),
+      fetch(`/api/scan/${scanId}/interactions`).then((r) => r.json()).catch(() => null),
+      fetch(`/api/scan/${scanId}/coverage`).then((r) => r.json()).catch(() => null),
+      fetch(`/api/scan/${scanId}/validation`).then((r) => r.json()).catch(() => null),
+      fetch(`/api/scan/${scanId}/replay`).then((r) => r.json()).catch(() => null),
+    ]);
+
+    if (scanRes?.ok) {
+      setScanData(scanRes);
+      const steps = (scanRes as Record<string, unknown>).journeySteps as
+        | Array<{ id: string; scan_id: string; step_index: number; url: string; label: string | null; action_type: string | null; status: string; sub_scan_id: string | null }>
+        | undefined;
+      if (steps && steps.length > 0) setJourneyStepsList(steps);
+      else if (!keepJourneyList) setJourneyStepsList(null);
+    }
+    if (ixRes?.ok) setScanInteractions(ixRes.interactions || []);
+    else setScanInteractions([]);
+    if (covRes?.ok) setScanCoverage(covRes);
+    else setScanCoverage(null);
+    if (valRes?.ok) setScanValidation({ results: valRes.results || [], summary: valRes.summary || { pass: 0, fail: 0, warn: 0 } });
+    else setScanValidation(null);
+    if (replayRes?.ok) setScanReplay({ steps: replayRes.steps || [], pageLoad: replayRes.pageLoad || { events: [], screenshots: [] } });
+    else setScanReplay(null);
+
+    const ss = (ixRes?.interactions || [])
+      .filter((ix: Record<string, unknown>) => ix.screenshot_path)
+      .map((ix: Record<string, unknown>) => ({ filepath: ix.screenshot_path as string }));
+    setScanScreenshots(ss);
+  }, []);
+
   const runDeepScan = useCallback(async (journeySteps?: Array<{ url: string; label: string; interactionDepth: "full" | "targeted"; targetActions?: string[] }>) => {
     const parsedCookies = parseCookiesFromText(cookiesInput);
     setScanRunning(true);
@@ -728,12 +795,28 @@ export default function HomePage() {
     setScanValidation(null);
     setScanScreenshots([]);
     setScanReplay(null);
+    setJourneyStepsList(null);
+    setSelectedStepId(null);
     setError(null);
     setBatchResults(null);
 
     try {
-      const body: Record<string, unknown> = journeySteps
-        ? { journey: journeySteps }
+      // If the user did not configure an explicit journey but pasted multiple
+      // URLs in the textarea, treat each URL as a journey step automatically.
+      // This way "Run deep scan" with N URLs scans every URL instead of
+      // silently picking just the first one.
+      const autoJourney = !journeySteps && parsedUrls.length > 1
+        ? parsedUrls.map((url, i) => ({
+            url,
+            label: `Page ${i + 1}`,
+            interactionDepth: "full" as const,
+          }))
+        : null;
+
+      const effectiveJourney = journeySteps ?? autoJourney;
+
+      const body: Record<string, unknown> = effectiveJourney
+        ? { journey: effectiveJourney }
         : { url: parsedUrls[0] };
       body.waitAfterLoadMs = waitMs;
       body.navigationTimeoutMs = navTimeoutMs;
@@ -788,26 +871,7 @@ export default function HomePage() {
 
       if (lastScanId && (gotComplete || !hasError)) {
         setActiveScanId(lastScanId);
-        // Fetch full results
-        const [scanRes, ixRes, covRes, valRes, replayRes] = await Promise.all([
-          fetch(`/api/scan/${lastScanId}`).then((r) => r.json()).catch(() => null),
-          fetch(`/api/scan/${lastScanId}/interactions`).then((r) => r.json()).catch(() => null),
-          fetch(`/api/scan/${lastScanId}/coverage`).then((r) => r.json()).catch(() => null),
-          fetch(`/api/scan/${lastScanId}/validation`).then((r) => r.json()).catch(() => null),
-          fetch(`/api/scan/${lastScanId}/replay`).then((r) => r.json()).catch(() => null),
-        ]);
-        if (scanRes?.ok) setScanData(scanRes);
-        if (ixRes?.ok) setScanInteractions(ixRes.interactions || []);
-        if (covRes?.ok) setScanCoverage(covRes);
-        if (valRes?.ok) setScanValidation({ results: valRes.results || [], summary: valRes.summary || { pass: 0, fail: 0, warn: 0 } });
-        if (replayRes?.ok) setScanReplay({ steps: replayRes.steps || [], pageLoad: replayRes.pageLoad || { events: [], screenshots: [] } });
-
-        // Extract screenshots from interactions
-        const ss = (ixRes?.interactions || [])
-          .filter((ix: Record<string, unknown>) => ix.screenshot_path)
-          .map((ix: Record<string, unknown>) => ({ filepath: ix.screenshot_path as string }));
-        setScanScreenshots(ss);
-
+        await loadDeepScanData(lastScanId);
         setTab("interactions");
       } else if (hasError) {
         const errorEvents = collectedEvents.filter((e) => e.type === "error");
@@ -820,30 +884,17 @@ export default function HomePage() {
     } finally {
       setScanRunning(false);
     }
-  }, [parsedUrls, waitMs, navTimeoutMs, cookiesInput, maxElements, enableScreenshots, enableAi]);
+  }, [parsedUrls, waitMs, navTimeoutMs, cookiesInput, maxElements, enableScreenshots, enableAi, loadDeepScanData]);
 
   const loadScanResults = useCallback(async (scanId: string) => {
     setActiveScanId(scanId);
+    setSelectedStepId(null);
+    setJourneyStepsList(null);
     try {
-      const [scanRes, ixRes, covRes, valRes, replayRes] = await Promise.all([
-        fetch(`/api/scan/${scanId}`).then((r) => r.json()).catch(() => null),
-        fetch(`/api/scan/${scanId}/interactions`).then((r) => r.json()).catch(() => null),
-        fetch(`/api/scan/${scanId}/coverage`).then((r) => r.json()).catch(() => null),
-        fetch(`/api/scan/${scanId}/validation`).then((r) => r.json()).catch(() => null),
-        fetch(`/api/scan/${scanId}/replay`).then((r) => r.json()).catch(() => null),
-      ]);
-      if (scanRes?.ok) setScanData(scanRes);
-      if (ixRes?.ok) setScanInteractions(ixRes.interactions || []);
-      if (covRes?.ok) setScanCoverage(covRes);
-      if (valRes?.ok) setScanValidation({ results: valRes.results || [], summary: valRes.summary || { pass: 0, fail: 0, warn: 0 } });
-      if (replayRes?.ok) setScanReplay({ steps: replayRes.steps || [], pageLoad: replayRes.pageLoad || { events: [], screenshots: [] } });
-      const ss = (ixRes?.interactions || [])
-        .filter((ix: Record<string, unknown>) => ix.screenshot_path)
-        .map((ix: Record<string, unknown>) => ({ filepath: ix.screenshot_path as string }));
-      setScanScreenshots(ss);
+      await loadDeepScanData(scanId);
       setTab("interactions");
     } catch { /* ignore */ }
-  }, []);
+  }, [loadDeepScanData]);
 
   const exportMarkdown = useCallback(() => {
     if (!aiMarkdown) return;
@@ -948,6 +999,14 @@ export default function HomePage() {
     report?.snapshot.eventStream && report.snapshot.eventStream.length > 0,
   );
 
+  // We keep every tab visible in every mode and render mode-appropriate
+  // content (or an empty-state hint) inside each tab. This way clicking a
+  // tab never produces a blank panel.
+  const hasDeepScanEvents = scanInteractions.some((i) => {
+    const events = (i as Record<string, unknown>).events;
+    return Array.isArray(events) && events.length > 0;
+  });
+
   const tabDefs = useMemo(
     () =>
       [
@@ -959,14 +1018,24 @@ export default function HomePage() {
           ...(scanScreenshots.length > 0 ? [{ id: "screenshots" as const, label: "Screenshots" }] : []),
           ...(scanReplay ? [{ id: "replay" as const, label: "Replay" }] : []),
         ] : []),
-        ...(hasEventStream ? [{ id: "events" as const, label: "Events" }] : []),
+        ...(hasEventStream || hasDeepScanEvents ? [{ id: "events" as const, label: "Events" }] : []),
         { id: "checks" as const, label: "All checks" },
         { id: "detailed" as const, label: "Full report" },
         { id: "raw" as const, label: "Raw data" },
         { id: "ai" as const, label: "AI report" },
       ] as const,
-    [hasEventStream, activeScanId, scanScreenshots.length, scanReplay],
+    [hasEventStream, hasDeepScanEvents, activeScanId, scanScreenshots.length, scanReplay],
   );
+
+  // Snap the active tab to a valid one whenever tabDefs changes. Without
+  // this, a tab that gets hidden (e.g. switching from audit -> deep-scan
+  // hides "All checks" / "Full report" / "AI report") would stay selected
+  // and the content area would render nothing.
+  useEffect(() => {
+    if (!tabDefs.some((t) => t.id === tab)) {
+      setTab(tabDefs[0]?.id ?? "issues");
+    }
+  }, [tabDefs, tab]);
 
   return (
     <div className="relative flex h-dvh max-h-dvh overflow-hidden">
@@ -989,35 +1058,95 @@ export default function HomePage() {
           </div>
         </div>
         {!sidebarCollapsed ? (
-          <nav className="flex flex-1 flex-col gap-1.5 p-3">
-            {[
-              { icon: "◈", label: "New check", hint: "Run a page from the main panel", active: true },
-              { icon: "▤", label: "Reports", hint: "Coming later", active: false },
-              { icon: "◇", label: "Rules", hint: "Coming later", active: false },
-            ].map((item, i) => (
-              <div
-                key={item.label}
-                title={item.hint}
-                className={`tl-card-enter rounded-xl px-3 py-2.5 text-left text-sm transition-transform duration-300 hover:translate-x-0.5 ${
-                  item.active
-                    ? "bg-gradient-to-r from-violet-500/20 to-cyan-500/10 font-medium text-white ring-1 ring-violet-400/35 shadow-[0_0_24px_-8px_rgba(139,92,246,0.5)]"
-                    : "text-white/35"
-                }`}
-                style={{ animationDelay: `${i * 90}ms` }}
-              >
-                <span className={item.active ? "text-violet-300" : "text-white/25"}>{item.icon}</span> {item.label}
-              </div>
-            ))}
+          <nav className="flex flex-col gap-1.5 p-3">
+            {(() => {
+              const navItems: Array<{
+                icon: string;
+                label: string;
+                hint: string;
+                active: boolean;
+                onClick: () => void;
+              }> = [
+                {
+                  icon: "◈",
+                  label: "New check",
+                  hint: "Reset the main panel and start a fresh scan",
+                  active: !activeScanId && !batchResults && !report,
+                  onClick: () => {
+                    setActiveScanId(null);
+                    setScanData(null);
+                    setScanInteractions([]);
+                    setScanCoverage(null);
+                    setScanValidation(null);
+                    setScanScreenshots([]);
+                    setScanReplay(null);
+                    setJourneyStepsList(null);
+                    setSelectedStepId(null);
+                    setBatchResults(null);
+                    setSelectedBatchIndex(0);
+                    setError(null);
+                    setTab("issues");
+                    if (typeof window !== "undefined") {
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }
+                  },
+                },
+                {
+                  icon: "▤",
+                  label: "Reports",
+                  hint: "Jump to your recent scan reports",
+                  active: false,
+                  onClick: () => {
+                    if (typeof document === "undefined") return;
+                    const el = document.getElementById("ll-scan-history");
+                    if (!el) return;
+                    el.scrollIntoView({ behavior: "smooth", block: "start" });
+                    el.classList.add("ll-flash");
+                    window.setTimeout(() => el.classList.remove("ll-flash"), 1200);
+                  },
+                },
+                {
+                  icon: "◇",
+                  label: "Rules",
+                  hint: "Edit verification rules / AI guidance",
+                  active: false,
+                  onClick: () => {
+                    if (typeof document === "undefined") return;
+                    const el = document.getElementById("ll-rules-section");
+                    if (!el) return;
+                    el.scrollIntoView({ behavior: "smooth", block: "start" });
+                    el.classList.add("ll-flash");
+                    window.setTimeout(() => el.classList.remove("ll-flash"), 1200);
+                  },
+                },
+              ];
+              return navItems.map((item, i) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  title={item.hint}
+                  onClick={item.onClick}
+                  className={`tl-card-enter rounded-xl px-3 py-2.5 text-left text-sm transition-all duration-300 hover:translate-x-0.5 hover:bg-white/[0.06] ${
+                    item.active
+                      ? "bg-gradient-to-r from-violet-500/20 to-cyan-500/10 font-medium text-white ring-1 ring-violet-400/35 shadow-[0_0_24px_-8px_rgba(139,92,246,0.5)]"
+                      : "text-white/65 hover:text-white"
+                  }`}
+                  style={{ animationDelay: `${i * 90}ms` }}
+                >
+                  <span className={item.active ? "text-violet-300" : "text-white/45"}>{item.icon}</span> {item.label}
+                </button>
+              ));
+            })()}
           </nav>
         ) : (
-          <div className="flex flex-1 flex-col items-center gap-3 py-4 text-lg text-white/30" aria-hidden>
+          <div className="flex flex-col items-center gap-3 py-4 text-lg text-white/45" aria-hidden>
             <span title="New check">◈</span>
             <span title="Reports">▤</span>
             <span title="Rules">◇</span>
           </div>
         )}
         {!sidebarCollapsed ? (
-          <div className="border-t border-white/10 p-3">
+          <div id="ll-scan-history" className="min-h-0 flex-1 overflow-y-auto border-t border-white/10 p-3">
             <ScanHistory onSelectScan={loadScanResults} />
           </div>
         ) : null}
@@ -1180,17 +1309,35 @@ export default function HomePage() {
                     <input type="checkbox" checked={enableAi} onChange={(e) => setEnableAi(e.target.checked)} className="rounded" />
                     AI anomaly detection
                   </label>
-                  <button type="button" onClick={() => setShowJourney((j) => !j)}
-                    className="text-[11px] text-cyan-400 hover:underline">
-                    {showJourney ? "Hide" : "Show"} multi-page journey
-                  </button>
                 </div>
               )}
 
-              {showJourney && scanMode === "deep" && (
+              {/*
+                Multi-page journey is available in BOTH modes:
+                - Quick (audit) mode: each step is page-load audited.
+                - Deep mode: each step gets a full interaction scan.
+              */}
+              <button
+                type="button"
+                onClick={() => setShowJourney((j) => !j)}
+                className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-medium text-cyan-300/85 hover:text-cyan-200"
+              >
+                <span aria-hidden>{showJourney ? "▾" : "▸"}</span>
+                {showJourney ? "Hide" : "Show"} multi-page journey
+              </button>
+
+              {showJourney && (
                 <div className="mt-3">
                   <JourneyConfig
-                    onStartJourney={(steps) => runDeepScan(steps)}
+                    value={journeyConfigSteps}
+                    onChange={setJourneyConfigSteps}
+                    onStartJourney={(steps) => {
+                      if (scanMode === "deep") {
+                        runDeepScan(steps);
+                      } else {
+                        runAudit(steps.map((s) => s.url));
+                      }
+                    }}
                     disabled={loading || scanRunning}
                   />
                 </div>
@@ -1225,23 +1372,58 @@ export default function HomePage() {
               <button
                 type="button"
                 onClick={() => {
-                  if (scanMode === "deep" && !showJourney) {
-                    runDeepScan();
+                  // Priority order is identical in both modes:
+                  //   1. Configured multi-page journey panel with valid steps.
+                  //   2. Multi-URL textarea (Deep auto-builds a journey;
+                  //      audit batches per URL).
+                  //   3. Single URL.
+                  if (scanMode === "deep") {
+                    if (showJourney && validJourneySteps.length > 0) {
+                      runDeepScan(validJourneySteps);
+                    } else {
+                      runDeepScan();
+                    }
                   } else {
-                    runAudit();
+                    if (showJourney && validJourneySteps.length > 0) {
+                      runAudit(validJourneySteps.map((s) => s.url));
+                    } else {
+                      runAudit();
+                    }
                   }
                 }}
-                disabled={loading || scanRunning || !urlsValid}
+                disabled={
+                  loading
+                  || scanRunning
+                  || (showJourney
+                    ? validJourneySteps.length === 0
+                    : !urlsValid)
+                }
                 className="tl-shimmer-btn mt-6 w-full rounded-xl bg-gradient-to-r from-violet-600 via-violet-500 to-cyan-600 py-3.5 text-sm font-bold text-white shadow-lg shadow-violet-600/30 transition hover:shadow-violet-500/45 hover:brightness-[1.08] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100"
               >
                 <span className="relative z-[1] inline-flex items-center justify-center gap-2">
                   {loading || scanRunning ? (
                     <>
                       <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white motion-reduce:animate-none" />
-                      {scanRunning ? "Deep scanning…" : parsedUrls.length > 1 ? `Checking ${parsedUrls.length} pages…` : "Checking page…"}
+                      {scanRunning ? (
+                        showJourney && validJourneySteps.length > 1
+                          ? `Deep scanning ${validJourneySteps.length} steps…`
+                          : "Deep scanning…"
+                      ) : showJourney && validJourneySteps.length > 1 ? (
+                        `Checking ${validJourneySteps.length} pages…`
+                      ) : parsedUrls.length > 1 ? (
+                        `Checking ${parsedUrls.length} pages…`
+                      ) : (
+                        "Checking page…"
+                      )}
                     </>
                   ) : scanMode === "deep" ? (
-                    parsedUrls.length > 1 ? `Deep scan (${parsedUrls.length} URLs)` : "Run deep scan"
+                    showJourney && validJourneySteps.length > 0
+                      ? `Run deep scan (${validJourneySteps.length} steps)`
+                      : parsedUrls.length > 1
+                        ? `Deep scan (${parsedUrls.length} URLs)`
+                        : "Run deep scan"
+                  ) : showJourney && validJourneySteps.length > 0 ? (
+                    `Run quick check (${validJourneySteps.length} steps)`
                   ) : parsedUrls.length > 1 ? (
                     `Quick check (${parsedUrls.length} URLs)`
                   ) : (
@@ -1439,6 +1621,7 @@ export default function HomePage() {
             </div>
 
             <div
+              id="ll-rules-section"
               className="tl-glass tl-fade-up rounded-2xl border border-white/10 p-5 ring-1 ring-cyan-500/5"
               style={{ animationDelay: "90ms" }}
             >
@@ -1528,21 +1711,72 @@ export default function HomePage() {
                       </div>
                     </div>
                   </div>
+                  {journeyStepsList && journeyStepsList.length > 0 ? (
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      <label className="text-[10px] font-semibold uppercase tracking-widest text-white/40">
+                        Show report for
+                      </label>
+                      <select
+                        value={selectedStepId ?? "__all__"}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          const next = v === "__all__" ? null : v;
+                          setSelectedStepId(next);
+                          const target = next ?? activeScanId;
+                          if (target) {
+                            void loadDeepScanData(target, true);
+                          }
+                        }}
+                        className="rounded-lg border border-white/12 bg-black/40 px-3 py-1.5 text-xs text-white outline-none transition focus:border-violet-400/40 focus:ring-1 focus:ring-violet-500/25"
+                      >
+                        <option value="__all__">All steps (aggregated)</option>
+                        {journeyStepsList.map((s) => {
+                          const disabled = !s.sub_scan_id;
+                          return (
+                            <option key={s.id} value={s.sub_scan_id ?? `__pending_${s.id}`} disabled={disabled}>
+                              #{s.step_index + 1} · {s.label || s.url}{disabled ? " (no data)" : ""}
+                            </option>
+                          );
+                        })}
+                      </select>
+                      <span className="text-[10px] text-white/35">
+                        {selectedStepId ? "Viewing single step" : `${journeyStepsList.length} URLs scanned`}
+                      </span>
+                    </div>
+                  ) : null}
                 </div>
                 <TabStrip tabs={[...tabDefs]} active={tab} onChange={setTab} />
                 <div className="report-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5">
-                  {tab === "interactions" && activeScanId && (
-                    <InteractionTimeline
-                      interactions={scanInteractions as Array<{id:string;element_tag:string;element_text:string;element_category:string;interaction_type:string;order_index:number;duration_ms:number;error:string|null;screenshot_path:string|null;diff_json:string|null}>}
-                      scanId={activeScanId}
+                  {tab === "issues" && (
+                    <DeepScanIssues
+                      session={((scanData as Record<string, unknown>)?.session as {id?:string;url?:string;score?:number|null;status?:string}) ?? null}
+                      interactions={scanInteractions as Array<{id:string;element_tag:string;element_text:string;element_category:string;interaction_type:string;order_index:number;duration_ms:number;error:string|null}>}
+                      validation={scanValidation as {results:Array<{id:string;schema_name:string;status:string;errors:Array<{field:string;message:string;severity:string}>;element_text?:string|null;element_category?:string|null;order_index?:number|null}>;summary:{pass:number;fail:number;warn:number}} | null}
+                      coverage={scanCoverage as {totalElements:number;testedElements:number;coveragePct:number;untestedElements:Array<{selector:string;tag:string;text:string;category:string}>} | null}
                     />
                   )}
+                  {tab === "interactions" && activeScanId && (
+                    scanInteractions.length === 0 ? (
+                      <p className="text-sm text-white/45">No interactions recorded for this scan yet.</p>
+                    ) : (
+                      <InteractionTimeline
+                        interactions={scanInteractions as Array<{id:string;element_tag:string;element_text:string;element_category:string;interaction_type:string;order_index:number;duration_ms:number;error:string|null;screenshot_path:string|null;diff_json:string|null}>}
+                        scanId={activeScanId}
+                      />
+                    )
+                  )}
                   {tab === "coverage" && <CoverageReport data={scanCoverage as {totalElements:number;testedElements:number;coveragePct:number;untestedElements:Array<{selector:string;tag:string;text:string;category:string}>} | null} />}
-                  {tab === "validation" && scanValidation && (
-                    <ValidationResults
-                      results={scanValidation.results as Array<{id:string;schema_name:string;status:string;errors:Array<{field:string;message:string;severity:string}>}>}
-                      summary={scanValidation.summary}
-                    />
+                  {tab === "validation" && (
+                    scanValidation && scanValidation.results.length > 0 ? (
+                      <ValidationResults
+                        results={scanValidation.results as Array<{id:string;schema_name:string;status:string;errors:Array<{field:string;message:string;severity:string}>}>}
+                        summary={scanValidation.summary}
+                      />
+                    ) : (
+                      <p className="text-sm text-white/45">
+                        No validation results recorded. Enable schemas (GA4 / Adobe / custom) before running and verify your tags emit events on at least one interaction.
+                      </p>
+                    )
                   )}
                   {tab === "screenshots" && activeScanId && <ScreenshotGallery screenshots={scanScreenshots as Array<{filepath:string}>} scanId={activeScanId} />}
                   {tab === "replay" && activeScanId && scanReplay && (
@@ -1552,7 +1786,78 @@ export default function HomePage() {
                       scanId={activeScanId}
                     />
                   )}
-                  {tab === "issues" && <p className="text-sm text-white/45">Run a quick check to see detailed issues.</p>}
+                  {tab === "events" && (
+                    scanReplay ? (
+                      <DeepScanEvents
+                        steps={scanReplay.steps as Array<{ index: number; element: { selector: string; tag: string; text: string; category: string }; interactionType: string; events: Array<{ source: string; event_name: string; payload: unknown }> }>}
+                        pageLoad={scanReplay.pageLoad as { events: Array<{ source: string; event_name: string; payload: unknown }> }}
+                      />
+                    ) : (
+                      <p className="text-sm text-white/45">No events captured yet for this scan.</p>
+                    )
+                  )}
+                  {tab === "checks" && (
+                    <DeepScanChecks
+                      session={((scanData as Record<string, unknown>)?.session as { url?: string; score?: number | null; status?: string; finished_at?: string | null }) ?? null}
+                      interactions={scanInteractions as Array<{ id: string; order_index: number; duration_ms: number; error: string | null }>}
+                      validation={scanValidation as Parameters<typeof DeepScanChecks>[0]["validation"]}
+                      coverage={scanCoverage as Parameters<typeof DeepScanChecks>[0]["coverage"]}
+                      journeySteps={(scanData as Record<string, unknown>)?.journeySteps as Parameters<typeof DeepScanChecks>[0]["journeySteps"] ?? null}
+                    />
+                  )}
+                  {tab === "detailed" && (
+                    <DeepScanFullReport
+                      session={((scanData as Record<string, unknown>)?.session as Parameters<typeof DeepScanFullReport>[0]["session"]) ?? null}
+                      interactions={scanInteractions as unknown as Parameters<typeof DeepScanFullReport>[0]["interactions"]}
+                      validation={scanValidation as Parameters<typeof DeepScanFullReport>[0]["validation"]}
+                      coverage={scanCoverage as Parameters<typeof DeepScanFullReport>[0]["coverage"]}
+                      journeySteps={(scanData as Record<string, unknown>)?.journeySteps as Parameters<typeof DeepScanFullReport>[0]["journeySteps"] ?? null}
+                    />
+                  )}
+                  {tab === "ai" && (
+                    <div className="space-y-4">
+                      <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/65">
+                        <p className="font-medium text-white/85">AI report</p>
+                        <p className="mt-1 text-white/55">
+                          The AI commentary runs on the structured snapshot produced by a Quick check. Run a Quick
+                          check on the same URL to get an LLM-generated summary alongside this deep scan’s
+                          interaction-level findings.
+                        </p>
+                      </div>
+                      {aiMarkdown ? (
+                        <article className="prose prose-invert max-w-none text-sm">
+                          <pre className="whitespace-pre-wrap break-words rounded-xl border border-white/10 bg-black/40 p-4 text-xs text-white/75">
+                            {aiMarkdown}
+                          </pre>
+                        </article>
+                      ) : null}
+                    </div>
+                  )}
+                  {tab === "raw" && (
+                    <pre className="report-scroll max-h-[min(70vh,640px)] overflow-auto rounded-xl border border-white/10 bg-black/50 p-4 font-mono text-xs leading-relaxed text-white/60">
+                      {JSON.stringify(
+                        {
+                          session: (scanData as Record<string, unknown>)?.session ?? null,
+                          journeySteps: (scanData as Record<string, unknown>)?.journeySteps ?? undefined,
+                          interactions: scanInteractions,
+                          coverage: scanCoverage,
+                          validation: scanValidation,
+                          replay: scanReplay
+                            ? {
+                                totalSteps: scanReplay.steps.length,
+                                pageLoadEventCount: Array.isArray(
+                                  (scanReplay.pageLoad as { events?: unknown }).events,
+                                )
+                                  ? ((scanReplay.pageLoad as { events: unknown[] }).events.length)
+                                  : 0,
+                              }
+                            : null,
+                        },
+                        null,
+                        2,
+                      )}
+                    </pre>
+                  )}
                 </div>
               </div>
             ) : !report ? (

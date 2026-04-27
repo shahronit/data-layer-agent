@@ -9,14 +9,33 @@ interface Props {
 
 export function ScanProgress({ events, isRunning }: Props) {
   const lastPhase = [...events].reverse().find((e) => e.type === "phase");
-  const detectionEvent = events.find((e) => e.type === "detection");
-  const coverageEvent = events.find((e) => e.type === "coverage");
-  const completeEvent = events.find((e) => e.type === "complete");
+  // Use the most recent coverage event; in a journey each step yields its own.
+  const coverageEvent = [...events].reverse().find((e) => e.type === "coverage");
+  // In a journey we get one `complete` event per step *and* a final
+  // journey-level one. Pick the latest so the banner reflects the most
+  // recent completion (or the journey-level "Journey complete" once done)
+  // rather than being stuck on the first step's completion message.
+  const completeEvent = [...events].reverse().find((e) => e.type === "complete");
   const errorEvent = [...events].reverse().find((e) => e.type === "error");
 
   const interactionEvents = events.filter((e) => e.type === "interaction");
-  const totalPlanned = (detectionEvent?.data?.planned as number) || 0;
-  const progress = totalPlanned > 0 ? Math.round((interactionEvents.length / totalPlanned) * 100) : 0;
+
+  // For journeys we receive one detection event per step. Sum the planned
+  // counts so the denominator grows in step with the numerator. For single
+  // scans this still matches the one-and-only detection event.
+  const totalPlanned = events
+    .filter((e) => e.type === "detection")
+    .reduce((sum, e) => sum + ((e.data?.planned as number) || 0), 0);
+
+  // The interaction event for step k+1 can be received in the brief window
+  // before that step's detection event (which fires after navigation), so
+  // clamp the visible numerator to the total to avoid 65/50, 130%.
+  const interactionsCount = totalPlanned > 0
+    ? Math.min(interactionEvents.length, totalPlanned)
+    : interactionEvents.length;
+  const progress = totalPlanned > 0
+    ? Math.min(100, Math.round((interactionsCount / totalPlanned) * 100))
+    : 0;
 
   return (
     <div className="space-y-3">
@@ -30,7 +49,7 @@ export function ScanProgress({ events, isRunning }: Props) {
       {totalPlanned > 0 && (
         <div>
           <div className="flex items-center justify-between text-xs text-white/50">
-            <span>Interactions: {interactionEvents.length}/{totalPlanned}</span>
+            <span>Interactions: {interactionsCount}/{totalPlanned}</span>
             <span>{progress}%</span>
           </div>
           <div className="mt-1 h-2 overflow-hidden rounded-full bg-white/10">

@@ -22,6 +22,21 @@ interface Props {
   scanId: string;
 }
 
+/**
+ * Build a screenshot URL from the stored relative path. The DB stores
+ * `<scanIdOfRun>/<filename>`. For journey scans the run-id is the sub-scan,
+ * not the journey id passed via props, so we honour the path stored on disk.
+ */
+function screenshotUrl(storedPath: string, fallbackScanId: string): string {
+  const parts = storedPath.split("/");
+  if (parts.length >= 2) {
+    const file = parts.pop() as string;
+    const dir = parts.join("/");
+    return `/api/scan/${dir}/screenshots/${file}`;
+  }
+  return `/api/scan/${fallbackScanId}/screenshots/${storedPath}`;
+}
+
 function StatusBadge({ hasError, eventCount }: { hasError: boolean; eventCount: number }) {
   if (hasError) return <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-[10px] font-bold text-rose-300 ring-1 ring-rose-500/30">FAILED</span>;
   if (eventCount > 0) return <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-300 ring-1 ring-emerald-500/30">{eventCount} events</span>;
@@ -137,7 +152,7 @@ export function InteractionTimeline({ interactions, scanId }: Props) {
                     <div>
                       <h4 className="text-xs font-bold text-white/50 uppercase tracking-wider mb-2">Screenshot</h4>
                       <img
-                        src={`/api/scan/${scanId}/screenshots/${ix.screenshot_path.split("/").pop()}`}
+                        src={screenshotUrl(ix.screenshot_path, scanId)}
                         alt={`Interaction ${ix.order_index + 1}`}
                         className="rounded-lg border border-white/10 max-h-48 object-contain"
                       />

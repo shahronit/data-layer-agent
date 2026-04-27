@@ -182,3 +182,65 @@ export function updateJourneyStepStatus(
     db.prepare(`UPDATE journey_steps SET status = ? WHERE id = ?`).run(status, id);
   }
 }
+
+/**
+ * For a given scanId, returns the set of scan_session ids whose rows hold the
+ * actual captured data. For a normal scan that's just `[scanId]`. For a
+ * journey scan, the journey row itself is empty and child rows are stored
+ * under each step's sub_scan_id, so we return the sub-scan ids (plus the
+ * journey id, harmless since it has no rows of its own). Order: journey id
+ * first, then sub-scan ids in step order. Sub-scans without an id yet
+ * (still pending/failed) are skipped.
+ */
+export function getEffectiveScanIds(db: Database.Database, scanId: string): string[] {
+  const subs = db
+    .prepare(
+      `SELECT sub_scan_id FROM journey_steps
+       WHERE scan_id = ? AND sub_scan_id IS NOT NULL
+       ORDER BY step_index`,
+    )
+    .all(scanId) as Array<{ sub_scan_id: string | null }>;
+  const subIds = subs.map((r) => r.sub_scan_id).filter((v): v is string => Boolean(v));
+  if (subIds.length === 0) return [scanId];
+  return [scanId, ...subIds];
+}
+
+export function isJourneyScan(db: Database.Database, scanId: string): boolean {
+  const row = db
+    .prepare(`SELECT COUNT(*) as count FROM journey_steps WHERE scan_id = ?`)
+    .get(scanId) as { count: number };
+  return row.count > 0;
+}
+
+/** Returns ordered journey step rows with their sub_scan_ids, or [] if not a journey. */
+export function getJourneySteps(
+  db: Database.Database,
+  scanId: string,
+): Array<{
+  id: string;
+  scan_id: string;
+  step_index: number;
+  url: string;
+  label: string | null;
+  action_type: string | null;
+  status: string;
+  sub_scan_id: string | null;
+}> {
+  return db
+    .prepare(`SELECT * FROM journey_steps WHERE scan_id = ? ORDER BY step_index`)
+    .all(scanId) as Array<{
+    id: string;
+    scan_id: string;
+    step_index: number;
+    url: string;
+    label: string | null;
+    action_type: string | null;
+    status: string;
+    sub_scan_id: string | null;
+  }>;
+}
+
+/** Builds an SQL placeholder list and the bind values for `IN (...)` clauses. */
+export function buildInClause(ids: string[]): { placeholders: string; values: string[] } {
+  return { placeholders: ids.map(() => "?").join(","), values: ids };
+}

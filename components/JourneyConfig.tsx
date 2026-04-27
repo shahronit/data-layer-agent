@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { JOURNEY_PRESETS } from "@/lib/journey/config";
 
-interface JourneyStep {
+export interface JourneyStep {
   url: string;
   label: string;
   interactionDepth: "full" | "targeted";
@@ -13,12 +13,23 @@ interface JourneyStep {
 interface Props {
   onStartJourney: (steps: JourneyStep[]) => void;
   disabled: boolean;
+  // Controlled component support: if both `value` and `onChange` are provided,
+  // the parent owns the journey-step state so the bottom "Run deep scan"
+  // button (or any other parent control) can also see/run the same steps.
+  value?: JourneyStep[];
+  onChange?: (steps: JourneyStep[]) => void;
 }
 
-export function JourneyConfig({ onStartJourney, disabled }: Props) {
-  const [steps, setSteps] = useState<JourneyStep[]>([
+export function JourneyConfig({ onStartJourney, disabled, value, onChange }: Props) {
+  const isControlled = Array.isArray(value) && typeof onChange === "function";
+  const [internalSteps, setInternalSteps] = useState<JourneyStep[]>([
     { url: "", label: "Page 1", interactionDepth: "full" },
   ]);
+  const steps = isControlled ? (value as JourneyStep[]) : internalSteps;
+  const setSteps = (next: JourneyStep[]) => {
+    if (isControlled) onChange!(next);
+    else setInternalSteps(next);
+  };
 
   const addStep = () => {
     if (steps.length >= 10) return;

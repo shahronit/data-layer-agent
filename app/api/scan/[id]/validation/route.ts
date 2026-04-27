@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getDb } from "@/lib/db/client";
+import { buildInClause, getDb, getEffectiveScanIds } from "@/lib/db/client";
 
 export const runtime = "nodejs";
 
@@ -10,14 +10,16 @@ export async function GET(
   const { id } = await params;
   try {
     const db = getDb();
+    const ids = getEffectiveScanIds(db, id);
+    const { placeholders, values } = buildInClause(ids);
 
     const results = db.prepare(
       `SELECT vr.*, i.element_text, i.element_category, i.order_index
        FROM validation_results vr
        LEFT JOIN interactions i ON vr.interaction_id = i.id
-       WHERE vr.scan_id = ?
+       WHERE vr.scan_id IN (${placeholders})
        ORDER BY vr.rowid`,
-    ).all(id) as Array<Record<string, unknown>>;
+    ).all(...values) as Array<Record<string, unknown>>;
 
     const parsed: Array<Record<string, unknown>> = results.map((r) => ({
       ...r,

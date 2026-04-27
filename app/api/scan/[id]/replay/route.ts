@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getDb } from "@/lib/db/client";
+import { buildInClause, getDb, getEffectiveScanIds } from "@/lib/db/client";
 
 export const runtime = "nodejs";
 
@@ -19,14 +19,17 @@ export async function GET(
       return NextResponse.json({ error: "Scan not found" }, { status: 404 });
     }
 
+    const ids = getEffectiveScanIds(db, id);
+    const { placeholders, values } = buildInClause(ids);
+
     const interactions = db.prepare(
-      `SELECT id, element_selector, element_tag, element_text, element_category,
+      `SELECT id, scan_id, element_selector, element_tag, element_text, element_category,
               interaction_type, order_index, timestamp, duration_ms, error,
               diff_json, screenshot_path
-       FROM interactions WHERE scan_id = ? ORDER BY order_index`,
-    ).all(id) as Array<Record<string, unknown>>;
+       FROM interactions WHERE scan_id IN (${placeholders}) ORDER BY scan_id, order_index`,
+    ).all(...values) as Array<Record<string, unknown>>;
 
-    const steps = interactions.map((row) => {
+    const steps = interactions.map((row, idx) => {
       const events = db.prepare(
         `SELECT source, event_name, payload_json, timestamp
          FROM captured_events WHERE interaction_id = ? ORDER BY timestamp`,
@@ -37,7 +40,8 @@ export async function GET(
       ).all(row.id as string) as Array<{ filepath: string }>;
 
       return {
-        index: row.order_index,
+        index: idx,
+        scanId: row.scan_id,
         element: {
           selector: row.element_selector,
           tag: row.element_tag,
@@ -57,15 +61,18 @@ export async function GET(
       };
     });
 
-    // Page load events (no interaction_id)
+    // Page load events / screenshots: rows with NULL interaction_id, across all effective scans.
     const pageLoadEvents = db.prepare(
       `SELECT source, event_name, payload_json, timestamp
-       FROM captured_events WHERE scan_id = ? AND interaction_id IS NULL ORDER BY timestamp`,
-    ).all(id) as Array<Record<string, unknown>>;
+       FROM captured_events
+       WHERE scan_id IN (${placeholders}) AND interaction_id IS NULL
+       ORDER BY timestamp`,
+    ).all(...values) as Array<Record<string, unknown>>;
 
     const pageLoadScreenshots = db.prepare(
-      `SELECT filepath FROM screenshots WHERE scan_id = ? AND interaction_id IS NULL`,
-    ).all(id) as Array<{ filepath: string }>;
+      `SELECT filepath FROM screenshots
+       WHERE scan_id IN (${placeholders}) AND interaction_id IS NULL`,
+    ).all(...values) as Array<{ filepath: string }>;
 
     return NextResponse.json({
       ok: true,

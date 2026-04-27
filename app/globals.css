@@ -278,6 +278,26 @@ body {
   }
 }
 
+@keyframes ll-flash-frames {
+  0% {
+    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0);
+    background-color: rgba(139, 92, 246, 0);
+  }
+  35% {
+    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.6);
+    background-color: rgba(139, 92, 246, 0.18);
+  }
+  100% {
+    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0);
+    background-color: rgba(139, 92, 246, 0);
+  }
+}
+
+.ll-flash {
+  animation: ll-flash-frames 1.2s ease-out;
+  border-radius: 0.75rem;
+}
+
 /* —— Reduced motion —— */
 @media (prefers-reduced-motion: reduce) {
   .tl-mesh,
